@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cui-guard"
+version = "0.1.0"
+description = "Local gateway that keeps controlled data off public LLMs."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "starlette",
+    "uvicorn",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+ner = ["presidio-analyzer", "spacy"]
+macos = ["pyobjc-framework-LocalAuthentication; sys_platform=='darwin'"]
+
+[project.scripts]
+cui-guard = "cui_guard.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cui_guard"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
