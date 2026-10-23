@@ -1,0 +1,137 @@
+import json
+import os
+import stat
+
+import httpx
+import pytest
+
+from cui_guard.launch import session as sess
+from cui_guard.launch.session import (
+    LaunchError,
+    banner,
+    prepare_policy,
+    resolve_credential,
+    start_gateway,
+)
+from cui_guard.model import Trust
+from cui_guard.override.human import FakeChannel
+from cui_guard.policy.loader import state_dir, user_config_path
+from cui_guard.policy.schema import Endpoint, parse_layer
+from cui_guard.policy.snapshot import save_snapshot, snapshot_path
+
+
+def ep(cred):
+    return Endpoint("x", "https://x.example.invalid", ("anthropic",), Trust.PUBLIC, cred)
+
+
+def test_resolve_passthrough_when_no_key():
+    assert resolve_credential(ep("env-or-passthrough:K"), {}) == ("passthrough", None)
+
+
+def test_resolve_gateway_when_key():
+    assert resolve_credential(ep("env-or-passthrough:K"), {"K": "v"}) == ("gateway", "v")
+    assert resolve_credential(ep("env:K"), {"K": "v"}) == ("gateway", "v")
+    assert resolve_credential(ep("none"), {}) == ("none", None)
+
+
+def test_env_missing_raises():
+    with pytest.raises(LaunchError):
+        resolve_credential(ep("env:K"), {})
+
+
+def _loosened_setup():
+    save_snapshot(snapshot_path(), parse_layer({"profile": "cui"}, "user"))
+    cfg = user_config_path()
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text('profile = "general"\n')
+
+
+def test_headless_refuses_loosening():
+    _loosened_setup()
+    with pytest.raises(LaunchError, match="profile"):
+        prepare_policy(True, FakeChannel("j", True))
+
+
+def test_loosening_requires_auth():
+    _loosened_setup()
+    ch = FakeChannel("j", False)
+    with pytest.raises(LaunchError):
+        prepare_policy(False, ch)
+    assert ch.auth_requests and "approve loosened settings" in ch.auth_requests[0]
+
+
+def test_loosening_approved_saves_snapshot():
+    _loosened_setup()
+    ch = FakeChannel("j", True)
+    assert prepare_policy(False, ch).profile == "general"
+    assert prepare_policy(True, FakeChannel("j", False)).profile == "general"  # no new loosening
+
+
+def test_min_version_too_new(isolated_dirs, monkeypatch):
+    org = isolated_dirs / "org.toml"
+    org.write_text('min_version = "99.0.0"\n')
+    monkeypatch.setattr("cui_guard.policy.loader.org_policy_path", lambda: org)
+    with pytest.raises(LaunchError, match="older"):
+        prepare_policy(True, FakeChannel("j", True))
+
+
+def test_lane_choice_rules():
+    policy, _ = sess.load_effective_policy()
+    assert sess.choose_lane(policy, "claude", None).name == "anthropic"
+    assert sess.choose_lane(policy, "codex", None).name == "openai"
+    assert sess.choose_lane(policy, "claude", "ollama").name == "ollama"
+    with pytest.raises(LaunchError):
+        sess.choose_lane(policy, "codex", "anthropic")
+    with pytest.raises(LaunchError):
+        sess.choose_lane(policy, "claude", "nope")
+
+
+def test_start_gateway_ready_and_two_sessions_isolated():
+    env = {"PATH": os.environ.get("PATH", "")}
+    ch = FakeChannel("j", True)
+    with (
+        start_gateway("claude", None, True, env, channel=ch) as a,
+        start_gateway("claude", None, True, env, channel=ch) as b,
+    ):
+        assert a.port != b.port and a.token != b.token
+        assert a.credential_mode == "passthrough"
+        for s, other in ((a, b), (b, a)):
+            r = httpx.post(
+                f"http://127.0.0.1:{s.port}/v1/messages",
+                json={"model": "m", "max_tokens": 1, "messages": []},
+                headers={"x-cui-guard-token": other.token},
+            )
+            assert r.status_code == 401
+        files = sorted((state_dir() / "sessions").glob("*.json"))
+        assert len(files) == 2
+        data = json.loads((state_dir() / "sessions" / f"{a.session_id}.json").read_text())
+        assert data["pid"] == a.proc.pid and data["port"] == a.port
+        assert data["agent"] == "claude" and data["lane"] == "anthropic"
+        assert data["trust"] == "public" and "started" in data
+        assert a.token not in json.dumps(data)
+        mode = stat.S_IMODE((state_dir() / "sessions" / f"{a.session_id}.json").stat().st_mode)
+        assert mode == 0o600
+        procs = (a.proc, b.proc)
+    assert all(p.poll() is not None for p in procs)
+    assert list((state_dir() / "sessions").glob("*.json")) == []
+
+
+def test_session_file_removed_on_exception():
+    env = {"PATH": os.environ.get("PATH", "")}
+    with (
+        pytest.raises(RuntimeError),
+        start_gateway("claude", None, True, env, channel=FakeChannel("j", True)) as s,
+    ):
+        proc = s.proc
+        raise RuntimeError("boom")
+    assert proc.poll() is not None
+    assert list((state_dir() / "sessions").glob("*.json")) == []
+
+
+def test_banner_mentions_passthrough_tradeoff():
+    env = {"PATH": os.environ.get("PATH", "")}
+    with start_gateway("claude", None, True, env, channel=FakeChannel("j", True)) as s:
+        text = banner(s, s.policy)
+    assert "anthropic" in text and "public" in text and "passthrough" in text
+    assert "Trade-off" in text and "Consumer-plan" in text
+    assert "compliant" not in text.lower()
