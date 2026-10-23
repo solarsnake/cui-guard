@@ -1,0 +1,6 @@
+Starting Nmap 7.94 ( synthetic sample )
+Nmap scan report for host-a.test (10.1.2.3)
+Host is up (0.0010s latency).
+PORT    STATE SERVICE
+22/tcp  open  ssh
+443/tcp open  https

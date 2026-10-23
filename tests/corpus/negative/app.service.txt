@@ -1,0 +1,10 @@
+[Unit]
+Description=Sample app
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 -m app
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

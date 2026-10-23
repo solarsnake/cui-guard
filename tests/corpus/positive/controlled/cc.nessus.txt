@@ -1,0 +1,6 @@
+Synthetic scanner export (fake data)
+Plugin ID: 99999
+Plugin Name: Example Fake Check
+Risk Factor: High
+Plugin Output:
+  Fake finding text for host-a

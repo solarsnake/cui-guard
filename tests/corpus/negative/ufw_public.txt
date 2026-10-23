@@ -1,0 +1,2 @@
+sudo iptables -A INPUT -s 192.0.2.5 -j ACCEPT
+sudo nft add rule inet filter input ip saddr 198.51.100.9 accept
