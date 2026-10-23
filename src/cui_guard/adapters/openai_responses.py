@@ -33,6 +33,7 @@ _ANNOTATION_SKIP = frozenset(
     {"type", "url", "file_id", "container_id", "index", "start_index", "end_index"}
 )
 _FORMAT_SKIP = frozenset({"type", "syntax"})
+_ACTION_SKIP = frozenset({"type"})
 _OUTCOME_SKIP = frozenset({"outcome"})
 
 
@@ -146,11 +147,8 @@ class OpenAIWalker(_Walker):
             else:
                 self.unparseable.append(loc)
         elif t in ("local_shell_call", "shell_call"):
-            action = it.get("action")
-            if isinstance(action, dict):
-                for k in ("command", "commands"):
-                    if k in action:
-                        self._leaves(f"{loc}.action.{k}", action, k)
+            if "action" in it:
+                self._leaves(f"{loc}.action", it, "action", _ACTION_SKIP)
         elif t == "shell_call_output":
             if "output" in it:
                 self._leaves(f"{loc}.output", it, "output", _OUTCOME_SKIP)
@@ -202,11 +200,23 @@ class OpenAIWalker(_Walker):
             self._leaves(k, body, k)
 
 
+def rehydrate_args(text: str, smap: SessionMap) -> str:
+    """Rehydrate tool-call arguments; malformed JSON falls back to plain string rehydration."""
+    try:
+        return rehydrate_json_text(text, smap)
+    except ValueError:
+        return smap.rehydrate(text)
+
+
+def finish_args(buf: ArgsBuffer, smap: SessionMap) -> str:
+    return rehydrate_args("".join(buf._parts), smap)
+
+
 def rehydrate_tree(obj: Any, smap: SessionMap, key: str | None = None) -> Any:
     """Rehydrate string values; reasoning items and encrypted_content stay untouched."""
     if isinstance(obj, str):
         if key == "arguments" and obj.strip():
-            return rehydrate_json_text(obj, smap)
+            return rehydrate_args(obj, smap)
         return smap.rehydrate(obj)
     if isinstance(obj, list):
         return [rehydrate_tree(v, smap) for v in obj]
@@ -223,6 +233,7 @@ class _ResponsesStream:
     def __init__(self, smap: SessionMap) -> None:
         self._smap = smap
         self._text: dict[tuple[Any, Any], tuple[TextHoldback, dict]] = {}
+        self._refusal: dict[tuple[Any, Any], tuple[TextHoldback, dict]] = {}
         self._args: dict[Any, ArgsBuffer] = {}
         self._has_args: set[Any] = set()
         self._custom: dict[Any, list[str]] = {}
@@ -242,21 +253,25 @@ class _ResponsesStream:
             bool(self._has_args)
             or any(c for c in self._custom.values())
             or any(hb._pending for hb, _ in self._text.values())
+            or any(hb._pending for hb, _ in self._refusal.values())
         )
 
     @staticmethod
-    def _text_event(meta: dict, text: str) -> SSEEvent:
-        t = "response.output_text.delta"
+    def _text_event(meta: dict, text: str, t: str = "response.output_text.delta") -> SSEEvent:
         return SSEEvent(t, dump({"type": t, **meta, "delta": text}))
 
     def _flush(self, match: Any) -> list[SSEEvent]:
         out: list[SSEEvent] = []
-        for key in [k for k in self._text if match(k)]:
-            hb, meta = self._text.pop(key)
-            tail = hb.flush()
-            if tail:
-                self._count(tail)
-                out.append(self._text_event(meta, tail))
+        for store, t in (
+            (self._text, "response.output_text.delta"),
+            (self._refusal, "response.refusal.delta"),
+        ):
+            for key in [k for k in store if match(k)]:
+                hb, meta = store.pop(key)
+                tail = hb.flush()
+                if tail:
+                    self._count(tail)
+                    out.append(self._text_event(meta, tail, t))
         return out
 
     def feed(self, ev: SSEEvent) -> list[SSEEvent]:
@@ -268,12 +283,23 @@ class _ResponsesStream:
             raise TypeError("unexpected SSE data shape")
         t = data.get("type")
         if t == "response.output_text.delta":
-            return self._text_delta(ev, data)
+            return self._text_delta(ev, data, self._text)
         if t == "response.output_text.done":
             out = self._flush(lambda k: k == (data.get("item_id"), data.get("content_index")))
             if isinstance(data.get("text"), str):
                 data["text"] = self._smap.rehydrate(data["text"])
             return [*out, SSEEvent(ev.event, dump(data))]
+        if t == "response.refusal.delta":
+            return self._text_delta(ev, data, self._refusal)
+        if t == "response.refusal.done":
+            out = self._flush(lambda k: k == (data.get("item_id"), data.get("content_index")))
+            if isinstance(data.get("refusal"), str):
+                data["refusal"] = self._smap.rehydrate(data["refusal"])
+            return [*out, SSEEvent(ev.event, dump(data))]
+        if t == "response.output_text.annotation.added":
+            if "annotation" in data:
+                data["annotation"] = rehydrate_tree(data["annotation"], self._smap)
+            return [SSEEvent(ev.event, dump(data))]
         if t == "response.function_call_arguments.delta":
             return self._args_delta(data)
         if t == "response.function_call_arguments.done":
@@ -299,19 +325,19 @@ class _ResponsesStream:
             if "part" in data:
                 data["part"] = rehydrate_tree(data["part"], self._smap)
             return [*out, SSEEvent(ev.event, dump(data))]
-        if t in ("response.completed", "response.incomplete"):
+        if t in ("response.completed", "response.incomplete", "response.failed"):
             out = self._flush(lambda k: True)
             if "response" in data:
                 data["response"] = rehydrate_tree(data["response"], self._smap)
             return [*out, SSEEvent(ev.event, dump(data))]
         return [ev]
 
-    def _text_delta(self, ev: SSEEvent, data: dict) -> list[SSEEvent]:
+    def _text_delta(self, ev: SSEEvent, data: dict, store: dict) -> list[SSEEvent]:
         key = (data.get("item_id"), data.get("content_index"))
-        if key not in self._text:
+        if key not in store:
             meta = {k: data[k] for k in ("item_id", "output_index", "content_index") if k in data}
-            self._text[key] = (TextHoldback(self._smap), meta)
-        out = self._text[key][0].feed(data.get("delta", ""))
+            store[key] = (TextHoldback(self._smap), meta)
+        out = store[key][0].feed(data.get("delta", ""))
         if not out:
             return []
         self._count(out)
@@ -333,9 +359,9 @@ class _ResponsesStream:
         self._has_args.discard(item)
         raw = data.get("arguments")
         if buf is not None and buffered:
-            full = buf.finish(self._smap)
+            full = finish_args(buf, self._smap)
         elif isinstance(raw, str) and raw.strip():
-            full = rehydrate_json_text(raw, self._smap)
+            full = rehydrate_args(raw, self._smap)
         else:
             return [ev]
         self._count(full)

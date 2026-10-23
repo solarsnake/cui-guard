@@ -221,3 +221,54 @@ def test_keepalive_and_error_body():
         "error": {"message": "m", "type": "invalid_request_error", "code": "cui_guard_blocked"}
     }
     assert AD.block_status == 400 and AD.paths == ("/v1/responses",) and AD.format == "openai-responses"
+
+
+def test_shell_action_all_strings_except_type():
+    body = {"model": "m", "input": [
+        {"type": "local_shell_call", "call_id": "c", "action": {
+            "type": "exec", "command": ["ls"], "env": {"K": "env-val"}, "working_directory": "/work", "user": "bob"}},
+        {"type": "shell_call", "call_id": "d", "action": {"commands": ["pwd"], "timeout_ms": 5}},
+    ]}  # fmt: skip
+    texts = {s.text for s in AD.extract(body).segments}
+    assert texts == {"ls", "env-val", "/work", "bob", "pwd"}
+
+
+def test_stream_malformed_args_fall_back_to_string_rehydrate():
+    smap = make_map()
+    ph = smap.placeholder_for("db.example.mil", "host")
+    bad = '{"h": ' + ph + " oops"
+    item = {"item_id": "fc1", "output_index": 0}
+    rw = AD.stream_rewriter(smap)
+    rw.feed(ev({"type": "response.function_call_arguments.delta", **item, "delta": bad}))
+    out = [json.loads(e.data) for e in rw.feed(ev({"type": "response.function_call_arguments.done", **item, "arguments": bad}))]
+    assert out[0]["delta"] == out[1]["arguments"] == '{"h": db.example.mil oops'
+    # done without any delta, and a completed payload
+    out = [json.loads(e.data) for e in rw.feed(ev({"type": "response.function_call_arguments.done", "item_id": "z", "arguments": bad}))]
+    assert out[1]["arguments"] == '{"h": db.example.mil oops'
+    _rw, outs = run([{"type": "response.completed", "response": {"output": [{"type": "function_call", "arguments": bad}]}}], smap)
+    assert outs[0]["response"]["output"][0]["arguments"] == '{"h": db.example.mil oops'
+
+
+def test_stream_refusal_and_annotation_and_failed():
+    smap = make_map()
+    ph = smap.placeholder_for("db.example.mil", "host")
+    base = {"item_id": "m1", "output_index": 0, "content_index": 0}
+    rw, out = run(
+        [
+            {"type": "response.refusal.delta", **base, "delta": "no " + ph[:5]},
+            {"type": "response.refusal.delta", **base, "delta": ph[5:] + " ok"},
+            {"type": "response.refusal.done", **base, "refusal": f"no {ph} ok"},
+            {"type": "response.output_text.annotation.added", **base, "annotation": {"type": "url_citation", "title": ph}},
+            {"type": "response.output_text.delta", **base, "delta": "held CG_"},
+            {"type": "response.failed", "response": {"output": [{"type": "message", "content": [{"type": "output_text", "text": ph}]}]}},
+        ],
+        smap,
+    )  # fmt: skip
+    ref = "".join(d["delta"] for d in out if d["type"] == "response.refusal.delta")
+    assert ref == "no db.example.mil ok"
+    assert next(d for d in out if d["type"] == "response.refusal.done")["refusal"] == "no db.example.mil ok"
+    assert next(d for d in out if d["type"].endswith("annotation.added"))["annotation"]["title"] == "db.example.mil"
+    types = [d["type"] for d in out]
+    assert types[-2:] == ["response.output_text.delta", "response.failed"]  # held text flushed before failed
+    assert out[-1]["response"]["output"][0]["content"][0]["text"] == "db.example.mil"
+    assert not rw.pending

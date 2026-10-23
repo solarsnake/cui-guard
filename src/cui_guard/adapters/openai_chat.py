@@ -9,6 +9,7 @@ from typing import Any
 from cui_guard.adapters.openai_responses import (
     OpenAIWalker,
     dump,
+    finish_args,
     notice,
     rehydrate_tree,
 )
@@ -27,8 +28,9 @@ _UNTOUCHED_KEYS = frozenset(
 )  # fmt: skip
 _HANDLED_KEYS = frozenset({"messages", "tools", "functions"})
 _MESSAGE_SKIP = frozenset(
-    {"role", "name", "tool_call_id", "id", "audio", "content", "tool_calls", "function_call"}
+    {"role", "tool_call_id", "id", "audio", "content", "tool_calls", "function_call"}
 )
+_AUDIO_SKIP = frozenset({"id"})
 _TEMPLATE_KEYS = ("id", "object", "created", "model", "system_fingerprint", "service_tier")
 
 
@@ -92,6 +94,8 @@ class _ChatWalker(OpenAIWalker):
                 self.args(f"{loc}.function_call.arguments", legacy, "arguments")
             else:
                 self.unparseable.append(f"{loc}.function_call")
+        if "audio" in m:
+            self._leaves(f"{loc}.audio", m, "audio", _AUDIO_SKIP)
         for k in list(m):
             if k not in _MESSAGE_SKIP:
                 self._leaves(f"{loc}.{k}", m, k)
@@ -152,10 +156,14 @@ class _ChatWalker(OpenAIWalker):
             self._leaves(k, body, k)
 
 
+_FC = -1  # tool index used for the legacy delta.function_call
+
+
 class _ChatStream:
     def __init__(self, smap: SessionMap) -> None:
         self._smap = smap
         self._text: dict[int, TextHoldback] = {}
+        self._refusal: dict[int, TextHoldback] = {}
         self._calls: dict[tuple[int, int], ArgsBuffer] = {}
         self._has_args: set[tuple[int, int]] = set()
         self._tmpl: dict[str, Any] = {}
@@ -171,7 +179,11 @@ class _ChatStream:
     @property
     def pending(self) -> bool:
         """True while text is held back or tool-call arguments are buffered."""
-        return bool(self._has_args) or any(hb._pending for hb in self._text.values())
+        return (
+            bool(self._has_args)
+            or any(hb._pending for hb in self._text.values())
+            or any(hb._pending for hb in self._refusal.values())
+        )
 
     def _chunk(self, choice: dict) -> SSEEvent:
         return SSEEvent(None, dump({**self._tmpl, "choices": [choice]}))
@@ -205,13 +217,14 @@ class _ChatStream:
                 drop = self._delta(ci, delta, fin)
             if fin is not None:
                 pre += self._emit_calls(ci)
-                hb = self._text.pop(ci, None)
-                tail = hb.flush() if hb is not None else ""
-                if tail:
-                    self._count(tail)
-                    d = ch.setdefault("delta", {})
-                    if isinstance(d, dict):
-                        d["content"] = (d.get("content") or "") + tail
+                for store, key in ((self._text, "content"), (self._refusal, "refusal")):
+                    hb = store.pop(ci, None)
+                    tail = hb.flush() if hb is not None else ""
+                    if tail:
+                        self._count(tail)
+                        d = ch.setdefault("delta", {})
+                        if isinstance(d, dict):
+                            d[key] = (d.get(key) or "") + tail
             droppable.append(drop)
         if choices and all(droppable):
             return pre
@@ -219,15 +232,25 @@ class _ChatStream:
 
     def _delta(self, ci: int, delta: dict, fin: Any) -> bool:
         """Rewrite a delta in place; True when the chunk carries nothing left to forward."""
-        vacated = False
-        content = delta.get("content")
-        if isinstance(content, str):
-            hb = self._text.setdefault(ci, TextHoldback(self._smap))
-            out = hb.feed(content)
-            if out:
-                self._count(out)
-            delta["content"] = out
-            vacated = bool(content) and not out and set(delta) == {"content"}
+        touched = False
+        emptied: set[str] = set()
+        for key, store in (("content", self._text), ("refusal", self._refusal)):
+            val = delta.get(key)
+            if isinstance(val, str):
+                out = store.setdefault(ci, TextHoldback(self._smap)).feed(val)
+                if out:
+                    self._count(out)
+                delta[key] = out
+                if val and not out:
+                    touched = True
+                    emptied.add(key)
+        fc = delta.get("function_call")
+        if isinstance(fc, dict) and "arguments" in fc:
+            self._buffer((ci, _FC), fc["arguments"])
+            fc["arguments"] = ""
+            if set(fc) <= {"arguments"}:
+                del delta["function_call"]  # re-emitted whole before the finish chunk
+                touched = True
         calls = delta.get("tool_calls")
         if isinstance(calls, list):
             kept = []
@@ -235,13 +258,9 @@ class _ChatStream:
                 if not isinstance(tc, dict):
                     kept.append(tc)
                     continue
-                key = (ci, tc.get("index", 0))
                 fn = tc.get("function")
                 if isinstance(fn, dict) and "arguments" in fn:
-                    frag = fn["arguments"]
-                    self._calls.setdefault(key, ArgsBuffer()).feed(frag if isinstance(frag, str) else "")
-                    if isinstance(frag, str) and frag.strip():
-                        self._has_args.add(key)
+                    self._buffer((ci, tc.get("index", 0)), fn["arguments"])
                     fn["arguments"] = ""
                     if set(tc) <= {"index", "function"} and set(fn) <= {"arguments"}:
                         continue  # a bare argument fragment, re-emitted whole later
@@ -250,32 +269,43 @@ class _ChatStream:
                 delta["tool_calls"] = kept
             else:
                 del delta["tool_calls"]
-                vacated = not delta
-        return vacated and fin is None
+                touched = True
+        return touched and fin is None and set(delta) <= emptied
+
+    def _buffer(self, key: tuple[int, int], frag: Any) -> None:
+        text = frag if isinstance(frag, str) else ""
+        self._calls.setdefault(key, ArgsBuffer()).feed(text)
+        if text.strip():
+            self._has_args.add(key)
 
     def _emit_calls(self, ci: int) -> list[SSEEvent]:
-        keys = sorted(k for k in self._calls if k[0] == ci)
-        calls = []
-        for key in keys:
+        delta: dict[str, Any] = {}
+        for key in sorted(k for k in self._calls if k[0] == ci):
             buf = self._calls.pop(key)
             if key not in self._has_args:
                 continue
             self._has_args.discard(key)
-            full = buf.finish(self._smap)
+            full = finish_args(buf, self._smap)
             self._count(full)
-            calls.append({"index": key[1], "function": {"arguments": full}})
-        if not calls:
+            if key[1] == _FC:
+                delta["function_call"] = {"arguments": full}
+            else:
+                delta.setdefault("tool_calls", []).append(
+                    {"index": key[1], "function": {"arguments": full}}
+                )
+        if not delta:
             return []
-        return [self._chunk({"index": ci, "delta": {"tool_calls": calls}, "finish_reason": None})]
+        return [self._chunk({"index": ci, "delta": delta, "finish_reason": None})]
 
     def finish(self) -> list[SSEEvent]:
         out: list[SSEEvent] = []
-        for ci, hb in list(self._text.items()):
-            tail = hb.flush()
-            if tail:
-                self._count(tail)
-                out.append(self._chunk({"index": ci, "delta": {"content": tail}, "finish_reason": None}))
-        self._text.clear()
+        for store, key in ((self._text, "content"), (self._refusal, "refusal")):
+            for ci, hb in list(store.items()):
+                tail = hb.flush()
+                if tail:
+                    self._count(tail)
+                    out.append(self._chunk({"index": ci, "delta": {key: tail}, "finish_reason": None}))
+            store.clear()
         if self._calls:
             self.notes.append(f"incomplete_tool_blocks={len(self._calls)}")
         self._calls.clear()  # incomplete tool JSON is never forwarded

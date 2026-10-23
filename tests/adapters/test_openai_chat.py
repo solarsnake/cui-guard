@@ -47,12 +47,12 @@ def test_extract_covers_all_strings():
     texts = {s.text for s in view.segments}
     assert not view.unparseable
     expected = {
-        "STOPWORD", "meta-label-1", "future note", "Be terse.", "plain user text", "part text one",
+        "alice", "STOPWORD", "meta-label-1", "future note", "Be terse.", "plain user text", "part text one",
         "refusal words", "my reasoning", "/tmp/a", "r", "file contents", "tool part", "Read a file",
         "path desc", "enum-a", "answer field", "out", "json_schema",
     }  # fmt: skip
     assert expected <= texts
-    assert not {"llama3", "alice", "call_1", "assistant", "user", "file-abc", "path", "required"} & texts
+    assert not {"llama3", "call_1", "assistant", "user", "file-abc", "path", "required"} & texts
     assert [s.index for s in view.segments] == list(range(len(view.segments)))
 
 
@@ -62,7 +62,7 @@ def test_apply_rewrites_strings_only():
     view = AD.extract(body)
     out = AD.apply(body, Decision(replacements={s.index: s.text.upper() for s in view.segments}))
     assert body == before
-    assert out["messages"][1]["name"] == "alice"
+    assert out["messages"][1]["name"] == "ALICE"
     args = out["messages"][3]["tool_calls"][0]["function"]["arguments"]
     assert json.loads(args) == {"path": "/TMP/A", "opts": {"mode": "R"}, "n": 3}
     assert AD.apply(body, Decision()) == body
@@ -177,3 +177,44 @@ def test_keepalive_and_error_body():
     assert AD.keepalive() == b": keepalive\n\n"
     assert AD.error_body("m")["error"]["code"] == "cui_guard_blocked"
     assert AD.block_status == 400 and AD.paths == ("/v1/chat/completions",) and AD.format == "openai-chat"
+
+
+def test_audio_leaves_scanned_except_id():
+    body = {"model": "m", "messages": [{"role": "assistant", "audio": {"id": "aud_1", "transcript": "spoken words"}}]}
+    assert [s.text for s in AD.extract(body).segments] == ["spoken words"]
+
+
+def test_stream_malformed_args_fall_back_to_string_rehydrate():
+    smap = make_map()
+    ph = smap.placeholder_for(HOST, "host")
+    call = {"index": 0, "function": {"arguments": '{"h": ' + ph + " oops"}}
+    _rw, out = run([chunk({"tool_calls": [call]}), chunk({}, finish="tool_calls")], smap)
+    datas = [json.loads(e.data) for e in out]
+    assert datas[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"] == '{"h": ' + HOST + " oops"
+    assert datas[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_stream_legacy_function_call_buffered():
+    smap = make_map()
+    ph = smap.placeholder_for(HOST, "host")
+    full = json.dumps({"h": ph})
+    rw = AD.stream_rewriter(smap)
+    first = chunk({"function_call": {"name": "f", "arguments": ""}})
+    assert json.loads(rw.feed(SSEEvent(None, json.dumps(first)))[0].data)["choices"][0]["delta"]["function_call"]["name"] == "f"
+    for frag in (full[:4], full[4:]):
+        assert rw.feed(SSEEvent(None, json.dumps(chunk({"function_call": {"arguments": frag}})))) == []
+    assert rw.pending
+    out = [json.loads(e.data) for e in rw.feed(SSEEvent(None, json.dumps(chunk({}, finish="function_call"))))]
+    assert json.loads(out[0]["choices"][0]["delta"]["function_call"]["arguments"]) == {"h": HOST}
+    assert out[1]["choices"][0]["finish_reason"] == "function_call"
+
+
+def test_stream_refusal_rehydrated():
+    smap = make_map()
+    ph = smap.placeholder_for(HOST, "host")
+    rw, out = run(
+        [chunk({"refusal": "no " + ph[:5]}), chunk({"refusal": ph[5:] + " ok"}, finish="stop")], smap
+    )
+    datas = [json.loads(e.data) for e in out]
+    assert "".join(d["choices"][0]["delta"].get("refusal", "") for d in datas) == f"no {HOST} ok"
+    assert not rw.pending
