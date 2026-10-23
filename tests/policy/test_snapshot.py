@@ -167,3 +167,60 @@ def test_atomic_save_leaves_no_temp(tmp_path):
     assert p.stat().st_mode & 0o777 == 0o600
     assert load_snapshot(p).profile == "general"
     assert [x.name for x in tmp_path.iterdir()] == ["snap.json"]
+
+
+def _pat(**over):
+    base = {
+        "id": "p1",
+        "class": "identifier",
+        "regex": "ZZ",
+        "flags": [],
+        "kind": None,
+        "verified": True,
+        "source": "user",
+    }
+    base.update(over)
+    return base
+
+
+def test_malformed_pattern_entries_are_none(tmp_path):
+    import json
+
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"source": "user", "patterns": [_pat()]}))
+    assert load_snapshot(p) is not None
+    bad = [
+        _pat(id=1),
+        _pat(**{"class": 3}),
+        _pat(regex=None),
+        _pat(source=None),
+        _pat(kind=5),
+        _pat(verified="false"),
+        _pat(verified=1),
+        _pat(flags="IGNORECASE"),
+        _pat(flags=[1]),
+    ]
+    for entry in bad:
+        p.write_text(json.dumps({"source": "user", "patterns": [entry]}))
+        assert load_snapshot(p) is None, entry
+
+
+def test_save_closes_fd_when_fdopen_fails(tmp_path, monkeypatch):
+    import os
+
+    closed = []
+    real_close = os.close
+    monkeypatch.setattr(os, "close", lambda fd: (closed.append(fd), real_close(fd)))
+
+    def boom(*a, **k):
+        raise OSError("boom")
+
+    monkeypatch.setattr(os, "fdopen", boom)
+    try:
+        save_snapshot(tmp_path / "s.json", _layer(profile="cui"))
+    except OSError:
+        pass
+    else:
+        raise AssertionError("expected OSError")
+    assert len(closed) == 1
+    assert list(tmp_path.iterdir()) == []

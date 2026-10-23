@@ -172,6 +172,19 @@ def _strs(v) -> list[str]:
     return v
 
 
+def _check_rule(r: dict) -> dict:
+    ok = (
+        all(isinstance(r.get(k), str) for k in ("id", "class", "regex", "source"))
+        and (r.get("kind") is None or isinstance(r["kind"], str))
+        and isinstance(r.get("verified"), bool)
+        and ("flags" not in r or isinstance(r["flags"], list))
+    )
+    if not ok:
+        raise PolicyError("snapshot: bad pattern entry")
+    _strs(r.get("flags", []))
+    return r
+
+
 def _from_dict(d: dict) -> PolicyLayer:
     if not isinstance(d, dict) or d.get("source") != "user":
         raise PolicyError("snapshot is not a user layer")
@@ -209,7 +222,7 @@ def _from_dict(d: dict) -> PolicyLayer:
         pats = d["patterns"]
         if not isinstance(pats, list) or not all(isinstance(r, dict) for r in pats):
             raise PolicyError("snapshot: bad patterns")
-        layer.patterns = [_rule_from_dict(r) for r in pats]
+        layer.patterns = [_rule_from_dict(_check_rule(r)) for r in pats]
     if "actions" in d:
         acts = d["actions"]
         if not isinstance(acts, list) or not all(
@@ -248,8 +261,13 @@ def save_snapshot(path: Path, layer: PolicyLayer | None) -> None:
     data = _to_dict(layer or PolicyLayer(source="user"))
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".snapshot-", suffix=".tmp")
     try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        try:
+            os.fchmod(fd, 0o600)
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
             json.dump(data, f, indent=2)
         os.replace(tmp, path)
     except BaseException:
