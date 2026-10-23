@@ -97,3 +97,16 @@ def test_unverified_rules_flagged():
     unverified = [r for r in RULES if r.source == "model-knowledge"]
     assert unverified
     assert all(r.verified is False for r in unverified)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["(C) 2024 Example Corp", "(c) 2024 Example Corp", "(C) Copyright 2023 Foo", "(C)2024 Foo", "(C) © Foo"],
+)
+def test_copyright_lines_not_classified(text):
+    assert DetClass.CLASSIFIED_MARKING not in classes(text)
+
+
+@pytest.mark.parametrize("text", ["(C) The following paragraph", "(TS//SI) text", "(S//NF) text"])
+def test_portion_marks_still_hit(text):
+    assert DetClass.CLASSIFIED_MARKING in classes(text)

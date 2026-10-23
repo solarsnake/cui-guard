@@ -10,10 +10,11 @@ verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
 
 # Anchored to line start: (S) / (C) mid-sentence are not portion marks.
+# Bare (C)/(S)/(TS) followed by a year, Copyright or the copyright sign is not a mark.
 [[rule]]
 id = "classified-portion-mark"
 class = "classified-marking"
-regex = '''^[ \t]*\((TS|S|C)(//[A-Z\-/ ,]+)?\)'''
+regex = '''^[ \t]*(\((TS|S|C)//[A-Z\-/ ,]+\)|\((TS|S|C)\)(?![ \t]*(\d{4}|(?i:copyright)|\u00a9)))'''
 flags = ["MULTILINE"]
 verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
