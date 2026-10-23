@@ -27,6 +27,12 @@ _KNOWN_TYPES = frozenset(
 )
 _PASSTHROUGH = frozenset({"thinking", "redacted_thinking"})
 _TOOL_BLOCKS = frozenset({"tool_use", "server_tool_use"})
+_UNTOUCHED_KEYS = frozenset({"model", "max_tokens", "stream", "temperature", "top_p", "top_k", "thinking"})
+_HANDLED_KEYS = frozenset({"system", "messages", "tools", "mcp_servers"})
+_SCHEMA_STRUCTURAL = frozenset({"type", "required", "$ref", "$schema", "format", "additionalProperties"})
+_SCHEMA_NAME_MAPS = frozenset({"properties", "$defs", "definitions", "patternProperties"})
+_CITATION_SKIP = frozenset({"type", "url", "encrypted_index", "file_id"})
+_NO_KEYS: frozenset[str] = frozenset()
 
 
 def _notice(kind: str) -> dict:
@@ -59,28 +65,36 @@ class _Walker:
         self.opaque.append(Opaque(idx, loc, kind))
         return self.decision is not None and idx in self.decision.replace_opaque
 
-    def _leaves(self, loc: str, holder: Any, key: Any) -> None:
+    def _leaves(self, loc: str, holder: Any, key: Any, skip: frozenset[str] = _NO_KEYS) -> None:
         """Every string leaf (values only, never keys) becomes its own segment."""
         v = holder[key]
         if isinstance(v, str):
             self._seg(loc, holder, key)
         elif isinstance(v, list):
             for i in range(len(v)):
-                self._leaves(f"{loc}[{i}]", v, i)
+                self._leaves(f"{loc}[{i}]", v, i, skip)
         elif isinstance(v, dict):
             for k in list(v):
-                self._leaves(f"{loc}.{k}", v, k)
+                if k not in skip:
+                    self._leaves(f"{loc}.{k}", v, k, skip)
 
-    def _schema(self, loc: str, node: Any) -> None:
-        if isinstance(node, dict):
-            for k in list(node):
-                if k == "description" and isinstance(node[k], str):
-                    self._seg(f"{loc}.description", node, k)
-                else:
-                    self._schema(f"{loc}.{k}", node[k])
-        elif isinstance(node, list):
-            for i, v in enumerate(node):
-                self._schema(f"{loc}[{i}]", v)
+    def _opt_seg(self, loc: str, holder: dict, key: str) -> None:
+        if holder.get(key) is not None:
+            self._seg(loc, holder, key)
+
+    def _schema(self, loc: str, holder: Any, key: Any, names: bool = False) -> None:
+        """Schema string leaves are segments, except values under structural keywords."""
+        v = holder[key]
+        if isinstance(v, str):
+            self._seg(loc, holder, key)
+        elif isinstance(v, list):
+            for i in range(len(v)):
+                self._schema(f"{loc}[{i}]", v, i)
+        elif isinstance(v, dict):
+            for k in list(v):
+                if not names and k in _SCHEMA_STRUCTURAL:
+                    continue
+                self._schema(f"{loc}.{k}", v, k, not names and k in _SCHEMA_NAME_MAPS)
 
     # -- blocks -----------------------------------------------------------
     def _content(self, loc: str, holder: Any, key: Any) -> None:
@@ -102,8 +116,11 @@ class _Walker:
             return
         if t in _PASSTHROUGH:
             return
+        if t == "document":
+            self._document(loc, holder, i, b)
+            return
         kind: str | None = None
-        if t in ("image", "document"):
+        if t == "image":
             src = b.get("source")
             stype = src.get("type") if isinstance(src, dict) else None
             kind = "url_source" if stype in ("url", "file") else t
@@ -120,13 +137,37 @@ class _Walker:
                 self._seg(f"{loc}.text", b, "text")
             else:
                 self.unparseable.append(loc)
+            cites = b.get("citations")
+            if isinstance(cites, list):
+                for j in range(len(cites)):
+                    self._leaves(f"{loc}.citations[{j}]", cites, j, _CITATION_SKIP)
         elif t == "tool_use":
             if isinstance(b.get("input"), dict):
                 self._leaves(f"{loc}.input", b, "input")
             else:
                 self.unparseable.append(loc)
-        elif "content" in b:  # tool_result, search_result
-            self._content(f"{loc}.content", b, "content")
+        else:  # tool_result, search_result
+            if t == "search_result":
+                self._opt_seg(f"{loc}.title", b, "title")
+                self._opt_seg(f"{loc}.source", b, "source")
+            if b.get("content") is not None:
+                self._content(f"{loc}.content", b, "content")
+
+    def _document(self, loc: str, holder: list, i: int, b: dict) -> None:
+        self._opt_seg(f"{loc}.title", b, "title")
+        self._opt_seg(f"{loc}.context", b, "context")
+        src = b.get("source")
+        stype = src.get("type") if isinstance(src, dict) else None
+        if stype == "text" and "data" in src:
+            self._seg(f"{loc}.source.data", src, "data")
+        elif stype == "content" and "content" in src:
+            self._content(f"{loc}.source.content", src, "content")
+        elif stype in ("url", "file", "base64"):
+            kind = "document" if stype == "base64" else "url_source"
+            if self._opq(loc, kind):
+                holder[i] = _notice(kind)
+        else:
+            self.unparseable.append(loc)
 
     # -- body -------------------------------------------------------------
     def _tools(self, tools: Any) -> None:
@@ -148,7 +189,7 @@ class _Walker:
             if "description" in tool:
                 self._seg(f"{loc}.description", tool, "description")
             if "input_schema" in tool:
-                self._schema(f"{loc}.input_schema", tool["input_schema"])
+                self._schema(f"{loc}.input_schema", tool, "input_schema")
             keep.append(tool)
         if self.decision is not None:
             tools[:] = keep
@@ -167,6 +208,12 @@ class _Walker:
                     self.unparseable.append(f"messages[{i}]")
         if "tools" in body:
             self._tools(body["tools"])
+        for k in list(body):
+            if k in _HANDLED_KEYS or k in _UNTOUCHED_KEYS:
+                continue
+            self._leaves(k, body, k)
+        if "mcp_servers" in body and self._opq("mcp_servers", "server_tool"):
+            del body["mcp_servers"]
 
 
 def _rehydrate_tree(obj: Any, smap: SessionMap) -> Any:
@@ -187,7 +234,12 @@ def _rehydrate_blocks(blocks: Any, smap: SessionMap) -> None:
             continue
         if b.get("type") == "text" and isinstance(b.get("text"), str):
             b["text"] = smap.rehydrate(b["text"])
-        elif b.get("type") == "tool_use" and "input" in b:
+            for c in b.get("citations") or []:
+                if isinstance(c, dict):
+                    for k in ("cited_text", "document_title"):
+                        if isinstance(c.get(k), str):
+                            c[k] = smap.rehydrate(c[k])
+        elif b.get("type") in _TOOL_BLOCKS and "input" in b:
             b["input"] = _rehydrate_tree(b["input"], smap)
 
 
@@ -276,6 +328,11 @@ class _AnthropicStream:
             if frag.strip():
                 self._has_args.add(idx)
             return []
+        if dtype == "citations_delta" and isinstance(delta.get("citation"), dict):
+            new = _rehydrate_tree(delta["citation"], self._smap)
+            if new != delta["citation"]:
+                delta["citation"] = new
+                return [SSEEvent(ev.event, _dump(data))]
         return [ev]
 
     def _stop(self, ev: SSEEvent, data: dict) -> list[SSEEvent]:
@@ -298,6 +355,8 @@ class _AnthropicStream:
         for idx, hb in list(self._text.items()):
             out += self._text_delta(idx, hb.flush())
         self._text.clear()
+        if self._args:
+            self.notes.append(f"incomplete_tool_blocks={len(self._args)}")
         self._args.clear()  # incomplete tool JSON is never forwarded
         self._has_args.clear()
         return out

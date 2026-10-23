@@ -10,8 +10,12 @@ from cui_guard.pseudo.mapper import SessionMap
 FIX = Path(__file__).parent / "fixtures"
 AD = AnthropicAdapter()
 NOTICE = "[cui-guard: {} removed — not scannable on this lane]"
-STRUCTURAL = {"type", "role", "id", "name", "tool_use_id", "model", "media_type", "data", "url", "required"}
-SKIP_TYPES = {"thinking", "redacted_thinking", "server_tool_use", "web_search_tool_result", "image", "document"}
+UNTOUCHED_TOP = {"model", "max_tokens", "stream", "temperature", "top_p", "top_k", "thinking", "mcp_servers"}
+SKIP_KEYS = {
+    "type", "role", "id", "tool_use_id", "name", "media_type", "required", "$ref", "$schema", "format",
+    "additionalProperties", "cache_control", "file_id", "url",
+}  # fmt: skip
+OPAQUE_TYPES = {"thinking", "redacted_thinking", "server_tool_use", "web_search_tool_result", "image"}
 
 
 def load(name):
@@ -42,20 +46,25 @@ def payloads(evs):
     return [json.loads(e.data) for e in evs]
 
 
-def free_strings(obj, key=None):
+def free_strings(obj, key=None, top=True):
+    """Strings that must be covered by a segment."""
     if isinstance(obj, str):
-        if key not in STRUCTURAL:
-            yield obj
+        yield obj
     elif isinstance(obj, list):
         for v in obj:
-            yield from free_strings(v, key)
+            yield from free_strings(v, key, False)
     elif isinstance(obj, dict):
-        if obj.get("type") in SKIP_TYPES:
+        t = obj.get("type")
+        if t in OPAQUE_TYPES or (key == "tools" and t not in (None, "custom")):
             return
-        if obj.get("type", "").startswith("web_search_2"):
+        if t == "document" and obj["source"]["type"] in ("base64", "url", "file"):
+            for k in ("title", "context"):
+                yield from free_strings(obj.get(k), k, False)
             return
         for k, v in obj.items():
-            yield from free_strings(v, k)
+            if k in SKIP_KEYS or (top and k in UNTOUCHED_TOP):
+                continue
+            yield from free_strings(v, k, False)
 
 
 def test_extract_covers_all_strings():
@@ -64,8 +73,10 @@ def test_extract_covers_all_strings():
     texts = {s.text for s in view.segments}
     assert not view.unparseable
     expected = set(free_strings(body))
-    expected.discard("ephemeral")  # cache_control value, not content
+    assert {"STOPWORD", "user-label-1", "future note", "kb-source-one", "T2", "Doc T", "ctx here",
+            "doc body text", "inner doc text", "cited words", "Doc A", "boom", "The answer text"} <= expected  # fmt: skip
     assert expected <= texts
+    assert not {"claude-sonnet-4-5", "https://mcp.example.mil/sse", "ephemeral"} & texts
     assert not any("c2lnLXN5bnRoZXRpYw" in t or "Plan:" in t for t in texts)
     assert [s.index for s in view.segments] == list(range(len(view.segments)))
 
@@ -100,7 +111,7 @@ def test_url_document_source_is_opaque():
     body = load("anthropic_request.json")
     view = AD.extract(body)
     kinds = sorted(o.kind for o in view.opaque)
-    assert kinds == ["encrypted", "image", "server_tool", "server_tool", "url_source"]
+    assert kinds == ["document", "encrypted", "image", "image", "server_tool", "server_tool", "server_tool", "url_source"]
     doc = next(o for o in view.opaque if o.kind == "url_source")
     out = AD.apply(body, Decision(replace_opaque={doc.index}))
     assert out["messages"][2]["content"][2]["text"] == NOTICE.format("url_source")
@@ -207,3 +218,67 @@ def test_stream_thinking_and_signature_passthrough():
 def test_error_body_and_attrs():
     assert AD.error_body("no") == {"type": "error", "error": {"type": "invalid_request_error", "message": "no"}}
     assert (AD.format, AD.paths, AD.block_status) == ("anthropic", ("/v1/messages",), 400)
+
+
+def test_mcp_servers_opaque_removed_when_replaced():
+    body = load("anthropic_request.json")
+    view = AD.extract(body)
+    mcp = next(o for o in view.opaque if o.location == "mcp_servers")
+    assert mcp.kind == "server_tool"
+    assert "mcp_servers" in AD.apply(body, Decision())
+    assert "mcp_servers" not in AD.apply(body, Decision(replace_opaque={mcp.index}))
+
+
+def test_document_text_sources_segments_base64_opaque():
+    body = load("anthropic_request.json")
+    view = AD.extract(body)
+    locs = {s.location for s in view.segments}
+    assert {"messages[2].content[5].source.data", "messages[2].content[5].title",
+            "messages[2].content[5].context", "messages[2].content[6].source.content[0].text",
+            "messages[2].content[4].title", "messages[2].content[4].source"} <= locs  # fmt: skip
+    assert "messages[2].content[7]" in {o.location for o in view.opaque if o.kind == "document"}
+    assert not view.unparseable
+
+
+def test_tool_result_null_content_not_unparseable():
+    body = {"model": "m", "messages": [{"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t", "content": None},
+        {"type": "tool_result", "tool_use_id": "u"}]}]}  # fmt: skip
+    assert AD.extract(body).unparseable == []
+
+
+def test_schema_structural_keywords_and_property_names():
+    body = {"model": "m", "messages": [], "tools": [{"name": "t", "description": "d", "input_schema": {
+        "type": "object", "required": ["type"], "$ref": "#/x",
+        "properties": {"type": {"type": "string", "description": "kind", "enum": ["fa", "fb"]}}}}]}  # fmt: skip
+    texts = [s.text for s in AD.extract(body).segments]
+    assert texts == ["d", "kind", "fa", "fb"]
+
+
+def test_rehydrate_citations_and_server_tool_input():
+    resp = {"content": [
+        {"type": "text", "text": "x", "citations": [
+            {"type": "char_location", "cited_text": "see host-01.cg.invalid", "document_title": "CG_PERSON_01"}]},
+        {"type": "server_tool_use", "id": "s", "name": "web_search", "input": {"query": "host-01.cg.invalid"}},
+    ]}  # fmt: skip
+    out = AD.rehydrate_response(resp, make_map())
+    assert out["content"][0]["citations"][0]["cited_text"] == "see db.example.mil"
+    assert out["content"][0]["citations"][0]["document_title"] == "Jane"
+    assert out["content"][1]["input"] == {"query": "db.example.mil"}
+
+
+def test_stream_citations_delta_rehydrated():
+    cit = {"type": "char_location", "cited_text": "at host-01.cg.invalid", "document_title": "CG_PERSON_01"}
+    ev = SSEEvent("content_block_delta", json.dumps(
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "citations_delta", "citation": cit}}))  # fmt: skip
+    out = AD.stream_rewriter(make_map()).feed(ev)
+    c = json.loads(out[0].data)["delta"]["citation"]
+    assert c["cited_text"] == "at db.example.mil" and c["document_title"] == "Jane"
+
+
+def test_finish_reports_incomplete_tool_blocks():
+    rw = AD.stream_rewriter(make_map())
+    for ev in events("anthropic_stream_tool.sse")[:3]:  # start + two deltas, no stop
+        assert rw.feed(ev) == ([ev] if ev.event == "content_block_start" else [])
+    assert rw.finish() == []
+    assert rw.notes == ["incomplete_tool_blocks=1"]

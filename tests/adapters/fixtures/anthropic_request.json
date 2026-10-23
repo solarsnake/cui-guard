@@ -2,7 +2,13 @@
   "model": "claude-sonnet-4-5",
   "max_tokens": 1024,
   "system": [
-    {"type": "text", "text": "You are helping with db.example.mil ops.", "cache_control": {"type": "ephemeral"}}
+    {
+      "type": "text",
+      "text": "You are helping with db.example.mil ops.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
   ],
   "tools": [
     {
@@ -10,33 +16,259 @@
       "description": "Read a file from the host.",
       "input_schema": {
         "type": "object",
-        "properties": {"path": {"type": "string", "description": "Path on db.example.mil"}},
-        "required": ["path"]
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path on db.example.mil"
+          }
+        },
+        "required": [
+          "path"
+        ]
       }
     },
-    {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+    {
+      "type": "web_search_20250305",
+      "name": "web_search",
+      "max_uses": 3
+    }
   ],
   "messages": [
-    {"role": "user", "content": "Check host db.example.mil please"},
+    {
+      "role": "user",
+      "content": "Check host db.example.mil please"
+    },
     {
       "role": "assistant",
       "content": [
-        {"type": "thinking", "thinking": "Plan: read the log.", "signature": "c2lnLXN5bnRoZXRpYw=="},
-        {"type": "redacted_thinking", "data": "cmVkYWN0ZWQ="},
-        {"type": "text", "text": "Reading the log."},
-        {"type": "tool_use", "id": "toolu_01", "name": "read_file", "input": {"path": "/var/log/db.example.mil.log", "opts": {"tags": ["alpha", "beta"], "n": 3}}},
-        {"type": "server_tool_use", "id": "srvtoolu_01", "name": "web_search", "input": {"query": "example mil"}},
-        {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_01", "content": [{"type": "web_search_result", "url": "https://example.mil/x", "title": "t", "encrypted_content": "ZW5j"}]}
+        {
+          "type": "thinking",
+          "thinking": "Plan: read the log.",
+          "signature": "c2lnLXN5bnRoZXRpYw=="
+        },
+        {
+          "type": "redacted_thinking",
+          "data": "cmVkYWN0ZWQ="
+        },
+        {
+          "type": "text",
+          "text": "Reading the log."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_01",
+          "name": "read_file",
+          "input": {
+            "path": "/var/log/db.example.mil.log",
+            "opts": {
+              "tags": [
+                "alpha",
+                "beta"
+              ],
+              "n": 3
+            }
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01",
+          "name": "web_search",
+          "input": {
+            "query": "example mil"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01",
+          "content": [
+            {
+              "type": "web_search_result",
+              "url": "https://example.mil/x",
+              "title": "t",
+              "encrypted_content": "ZW5j"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "As cited.",
+          "citations": [
+            {
+              "type": "char_location",
+              "cited_text": "cited words",
+              "document_index": 0,
+              "document_title": "Doc A",
+              "start_char_index": 0,
+              "end_char_index": 5
+            }
+          ]
+        }
       ]
     },
     {
       "role": "user",
       "content": [
-        {"type": "tool_result", "tool_use_id": "toolu_01", "content": [{"type": "text", "text": "line one"}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}]},
-        {"type": "tool_result", "tool_use_id": "toolu_02", "content": "plain string result"},
-        {"type": "document", "source": {"type": "url", "url": "https://docs.example.mil/a.pdf"}},
-        {"type": "text", "text": "Summarize.", "cache_control": {"type": "ephemeral"}}
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01",
+          "content": [
+            {
+              "type": "text",
+              "text": "line one"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgo="
+              }
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_02",
+          "content": "plain string result"
+        },
+        {
+          "type": "document",
+          "source": {
+            "type": "url",
+            "url": "https://docs.example.mil/a.pdf"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Summarize.",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        },
+        {
+          "type": "search_result",
+          "source": "kb-source-one",
+          "title": "KB entry",
+          "content": [
+            {
+              "type": "text",
+              "text": "kb body"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgo="
+              }
+            }
+          ]
+        },
+        {
+          "type": "document",
+          "title": "Doc T",
+          "context": "ctx here",
+          "source": {
+            "type": "text",
+            "media_type": "text/plain",
+            "data": "doc body text"
+          }
+        },
+        {
+          "type": "document",
+          "title": "Doc C",
+          "source": {
+            "type": "content",
+            "content": [
+              {
+                "type": "text",
+                "text": "inner doc text"
+              }
+            ]
+          }
+        },
+        {
+          "type": "document",
+          "title": "Doc B",
+          "source": {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": "JVBERi0="
+          }
+        },
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_03",
+          "is_error": true,
+          "content": [
+            {
+              "type": "text",
+              "text": "boom"
+            },
+            {
+              "type": "search_result",
+              "source": "kb-source-two",
+              "title": "T2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "nested body"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_04",
+          "content": null
+        }
       ]
+    }
+  ],
+  "temperature": 0.2,
+  "stream": false,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 1024
+  },
+  "stop_sequences": [
+    "STOPWORD"
+  ],
+  "metadata": {
+    "user_id": "user-label-1"
+  },
+  "tool_choice": {
+    "type": "tool",
+    "name": "read_file"
+  },
+  "output_format": {
+    "type": "json_schema",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "answer": {
+          "type": "string",
+          "description": "The answer text"
+        }
+      },
+      "required": [
+        "answer"
+      ]
+    }
+  },
+  "x_future_key": {
+    "note": "future note",
+    "items": [
+      "one",
+      "two"
+    ]
+  },
+  "mcp_servers": [
+    {
+      "type": "url",
+      "url": "https://mcp.example.mil/sse",
+      "name": "mcp1"
     }
   ]
 }
