@@ -49,6 +49,10 @@ class SessionMap:
         self._seen.update(m.group(0) for m in PLACEHOLDER_RE.finditer(text))
 
     def _assign(self, value: str, kind: str) -> str:
+        if kind not in _FORMATS:
+            raise ValueError(f"unknown placeholder kind: {kind!r}")
+        if not value:
+            raise ValueError("cannot map an empty value")
         key = (kind, value)
         found = self._fwd.get(key)
         if found is not None:

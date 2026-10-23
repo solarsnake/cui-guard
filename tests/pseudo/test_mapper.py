@@ -132,3 +132,35 @@ def test_ip_cap_raises():
     assert m.placeholder_for("v65533", "ip") == "198.18.255.254"
     with pytest.raises(RuntimeError):
         m.placeholder_for("overflow", "ip")
+
+
+def test_empty_value_rejected():
+    m = SessionMap()
+    with pytest.raises(ValueError):
+        m.placeholder_for("", "term")
+    t = "abc"
+    assert m.pseudonymize(t, [Hit("t", DetClass.IDENTIFIER, 1, 1, "", "term")]) == t
+    assert len(m) == 0
+
+
+def test_unknown_kind_rejected():
+    with pytest.raises(ValueError, match="bogus"):
+        SessionMap().placeholder_for("x", "bogus")
+
+
+def test_perf_large_map():
+    import time
+
+    m = SessionMap()
+    for i in range(5000):
+        m.placeholder_for(f"real-value-{i}.example.mil", "term")
+    text = " ".join(f"line {i} real-value-{i * 7 % 5000}.example.mil ok" for i in range(500))
+    masked = m.pseudonymize(text, [])
+    assert len(text) > 15000
+    t0 = time.perf_counter()
+    m.pseudonymize(text, [])
+    t1 = time.perf_counter()
+    assert m.rehydrate(masked) == text
+    t2 = time.perf_counter()
+    assert t1 - t0 < 0.02
+    assert t2 - t1 < 0.02
