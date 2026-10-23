@@ -22,18 +22,25 @@ _HOMOGLYPHS: dict[str, str] = {
 }  # fmt: skip
 
 
-def normalize(text: str) -> tuple[str, list[int]]:
-    """NFKC, drop format (Cf) chars, fold homoglyphs.
+_NEWLINES = {"\r": "\n", "\u2028": "\n", "\u2029": "\n", "\u0085": "\n"}
 
+
+def normalize(text: str) -> tuple[str, list[int]]:
+    """NFKD, drop format (Cf) and combining (Mn) chars, fold homoglyphs.
+
+    Line separators (CR, U+2028, U+2029, U+0085) become LF.
     Returns (normalized, index_map). index_map[i] is the original index of
     normalized char i; a final sentinel equals len(text).
     """
+    if text.isascii() and "\r" not in text:
+        return text, list(range(len(text) + 1))
     out: list[str] = []
     index_map: list[int] = []
     for i, ch in enumerate(text):
-        for c in unicodedata.normalize("NFKC", ch):
-            if unicodedata.category(c) == "Cf":
+        for c in unicodedata.normalize("NFKD", ch):
+            if unicodedata.category(c) in ("Cf", "Mn"):
                 continue
+            c = _NEWLINES.get(c, c)
             out.append(_HOMOGLYPHS.get(c, c))
             index_map.append(i)
     index_map.append(len(text))

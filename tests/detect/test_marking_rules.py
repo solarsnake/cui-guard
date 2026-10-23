@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from cui_guard.detect.rules import load_builtin_rules, scan_rules
+from cui_guard.detect.rules import load_builtin_rules, rules_from_patterns, scan_rules
 from cui_guard.model import DetClass
 
 CORPUS = Path(__file__).parent.parent / "corpus" / "positive"
@@ -66,9 +66,18 @@ def test_cui_banners(text):
     assert DetClass.CUI_MARKING in classes(text)
 
 
-@pytest.mark.parametrize("text", ["C\u200bUI//SP-CTI", "ＳＥＣＲＥＴ//ＮＯＦＯＲＮ"])
-def test_zero_width_and_fullwidth_markings_detected(text):
-    assert classes(text) & MARKING
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("C\u200bUI//SP-CTI", DetClass.CUI_MARKING),
+        (
+            "\uff33\uff25\uff23\uff32\uff25\uff34//\uff2e\uff2f\uff26\uff2f\uff32\uff2e",
+            DetClass.CLASSIFIED_MARKING,
+        ),
+    ],
+)
+def test_zero_width_and_fullwidth_markings_detected(text, expected):
+    assert expected in classes(text)
 
 
 def test_zero_width_hit_maps_to_original_offsets():
@@ -101,12 +110,88 @@ def test_unverified_rules_flagged():
 
 @pytest.mark.parametrize(
     "text",
-    ["(C) 2024 Example Corp", "(c) 2024 Example Corp", "(C) Copyright 2023 Foo", "(C)2024 Foo", "(C) © Foo"],
+    [
+        "(C) 2024 Example Corp",
+        "(c) 2024 Example Corp",
+        "(C) Copyright 2023 Foo",
+        "(C)2024 Foo",
+        "(C) © Foo",
+    ],
 )
 def test_copyright_lines_not_classified(text):
     assert DetClass.CLASSIFIED_MARKING not in classes(text)
 
 
-@pytest.mark.parametrize("text", ["(C) The following paragraph", "(TS//SI) text", "(S//NF) text"])
+@pytest.mark.parametrize(
+    "text", ["(C) The following paragraph", "(TS//SI) text", "(S//NF) text"]
+)
 def test_portion_marks_still_hit(text):
     assert DetClass.CLASSIFIED_MARKING in classes(text)
+
+
+@pytest.mark.parametrize(
+    "text", ["This value is derived from the input", "classified by size"]
+)
+def test_handling_words_in_prose_not_classified(text):
+    assert DetClass.CLASSIFIED_MARKING not in classes(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["derived from: SCG 2023", "Classified By: J. Doe", "declassify on: 20501231"],
+)
+def test_authority_block_case_insensitive(text):
+    assert DetClass.CLASSIFIED_MARKING in classes(text)
+
+
+@pytest.mark.parametrize(
+    "text", ["foo\rSECRET//NOFORN", "foo\u2028SECRET//NOFORN", "a\nSECRET"]
+)
+def test_line_separators_anchor_banners(text):
+    assert DetClass.CLASSIFIED_MARKING in classes(text)
+
+
+@pytest.mark.parametrize("text", ["\u0106UI//SP-CTI", "C\u0301UI//SP-CTI"])
+def test_combining_marks_stripped(text):
+    assert DetClass.CUI_MARKING in classes(text)
+
+
+@pytest.mark.parametrize("text", ["see https://SAP.com/x", "http://SI.example"])
+def test_urls_not_control_markings(text):
+    assert DetClass.CLASSIFIED_MARKING not in classes(text)
+
+
+def test_control_markings_still_hit():
+    assert DetClass.CLASSIFIED_MARKING in classes("SECRET//SI//NOFORN")
+    assert DetClass.CLASSIFIED_MARKING in classes("x //SI/TK//NOFORN")
+
+
+def test_rules_from_patterns_valid():
+    (r,) = rules_from_patterns(
+        [{"id": "org-1", "class": "identifier", "regex": r"ACME-\d+", "kind": "PROJ"}],
+        "org.toml",
+    )
+    assert (r.id, r.cls, r.kind, r.verified, r.source) == (
+        "org-1",
+        DetClass.IDENTIFIER,
+        "PROJ",
+        True,
+        "org.toml",
+    )
+    assert [h.value for h in scan_rules("see ACME-42", [r])] == ["ACME-42"]
+
+
+@pytest.mark.parametrize(
+    ("entry", "needle"),
+    [
+        ({"id": "a", "class": "identifier", "regex": "("}, "patterns[1]"),
+        ({"id": "a", "class": "nope", "regex": "x"}, "unknown class"),
+        ({"id": "a", "class": "identifier"}, "'regex'"),
+        ({"class": "identifier", "regex": "x"}, "'id'"),
+    ],
+)
+def test_rules_from_patterns_errors(entry, needle):
+    good = {"id": "g", "class": "identifier", "regex": "x"}
+    with pytest.raises(ValueError, match=r"patterns\[1\]") as ei:
+        rules_from_patterns([good, entry], "org.toml")
+    assert needle in str(ei.value) or needle == "patterns[1]"

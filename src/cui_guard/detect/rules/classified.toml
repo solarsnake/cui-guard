@@ -23,6 +23,7 @@ source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?par
 id = "classified-authority-classified-by"
 class = "classified-marking"
 regex = '''Classified By:'''
+flags = ["IGNORECASE"]
 verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
 
@@ -30,6 +31,7 @@ source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?par
 id = "classified-authority-derived-from"
 class = "classified-marking"
 regex = '''Derived From:'''
+flags = ["IGNORECASE"]
 verified = false
 source = "model-knowledge"
 
@@ -37,6 +39,7 @@ source = "model-knowledge"
 id = "classified-authority-reason"
 class = "classified-marking"
 regex = '''Reason:\s*1\.4\(?[a-h]\)?'''
+flags = ["IGNORECASE"]
 verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
 
@@ -44,16 +47,18 @@ source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?par
 id = "classified-authority-declassify-on"
 class = "classified-marking"
 regex = '''Declassify On:\s*(\d{8}|50X1-HUM|50X2-WMD)'''
+flags = ["IGNORECASE"]
 verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
 
 # Classified-only control markings. Markings shared with CUI limited
 # dissemination controls (NOFORN, REL TO, RELIDO, FISA, PROPIN) live in cui.toml.
 # 2001.24 names no strings; the list is model knowledge.
+# Not preceded by ':' and not followed by a host/path-like continuation (URLs).
 [[rule]]
 id = "classified-control-marking"
 class = "classified-marking"
-regex = '''//(SI|TK|HCS|SCI|SAP|SAR-[A-Z]+|ORCON-USGOV|ORCON|FGI|FRD|RD|TFNI|IMCON)(?![A-Za-z0-9])'''
+regex = '''(?<!:)//(SI|TK|HCS|SCI|SAP|SAR-[A-Z]+|ORCON-USGOV|ORCON|FGI|FRD|RD|TFNI|IMCON)(?![A-Za-z0-9])(?![.:/][a-z0-9])'''
 verified = false
 source = "model-knowledge"
 
@@ -63,11 +68,3 @@ class = "classified-marking"
 regex = '''\(FGI-C\)'''
 verified = true
 source = "https://www.law.cornell.edu/cfr/text/32/2001.24"
-
-[[rule]]
-id = "classified-handling-words"
-class = "classified-marking"
-regex = '''Derived From|Declassify On|Classified By'''
-flags = ["IGNORECASE"]
-verified = false
-source = "model-knowledge"

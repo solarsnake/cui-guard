@@ -65,17 +65,25 @@ def load_builtin_rules() -> list[Rule]:
 
 def rules_from_patterns(entries: list[dict], origin: str) -> list[Rule]:
     """Build rules from user/org [[patterns]] entries (id, class, regex, kind?)."""
-    return [
-        Rule(
-            id=e["id"],
-            cls=_parse_class(e["id"], e["class"]),
-            pattern=_compile(e["id"], e["regex"], []),
-            kind=e.get("kind"),
-            verified=True,
-            source=origin,
-        )
-        for e in entries
-    ]
+    rules: list[Rule] = []
+    for n, e in enumerate(entries):
+        for key in ("id", "class", "regex"):
+            if not isinstance(e.get(key), str) or not e[key]:
+                raise ValueError(f"patterns[{n}]: missing or invalid key {key!r}")
+        try:
+            rules.append(
+                Rule(
+                    id=e["id"],
+                    cls=_parse_class(e["id"], e["class"]),
+                    pattern=_compile(e["id"], e["regex"], []),
+                    kind=e.get("kind"),
+                    verified=True,
+                    source=origin,
+                )
+            )
+        except ValueError as err:
+            raise ValueError(f"patterns[{n}]: {err}") from err
+    return rules
 
 
 def scan_rules(text: str, rules: list[Rule]) -> list[Hit]:
