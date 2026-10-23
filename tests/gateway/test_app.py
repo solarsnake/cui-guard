@@ -145,13 +145,79 @@ async def test_guard_header_stripped(tmp_path):
     assert "x-cui-guard-token" not in h and h["x-custom"] == "yes"
 
 
-async def test_count_tokens_404_and_hello(tmp_path):
+async def test_count_tokens_404_recorded_as_rejected(tmp_path):
     up = Upstream()
     async with client(make_cfg(tmp_path), up) as c:
         r = await c.post("/v1/messages/count_tokens", json=msg("hi"), headers=H)
         assert r.status_code == 404
-        assert (await c.head("/api/hello", headers=H)).status_code == 200
+        assert (await c.post("/v1/messages/count_tokens", json=msg("hi"))).status_code == 401
     assert up.requests == []
+    assert [r["action"] for r in audit_rows(tmp_path)] == ["rejected"]
+
+
+async def test_hello_needs_no_token(tmp_path):
+    async with client(make_cfg(tmp_path), Upstream()) as c:
+        r = await c.head("/api/hello")
+    assert r.status_code == 200 and r.content == b""
+    assert audit_rows(tmp_path) == []
+
+
+async def test_passthrough_bearer_guard_token_is_401(tmp_path):
+    up = Upstream()
+    async with client(make_cfg(tmp_path, mode="passthrough"), up) as c:
+        r = await c.post("/v1/messages", json=msg("hi"), headers={"authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 401 and up.requests == []
+
+
+async def test_block_mode_sink_down_zero_upstream_calls(tmp_path):
+    cfg = make_cfg(tmp_path)
+    cfg.policy.audit = AuditConfig(
+        path=str(tmp_path / "audit.jsonl"), sink="syslog:/nonexistent/sock", on_sink_failure="block"
+    )
+    up = Upstream()
+    async with client(cfg, up) as c:
+        r = await c.post("/v1/messages", json=msg("hi"), headers=H)
+        s = await c.post("/v1/messages", json=msg("hi", stream=True), headers=H)
+    assert r.status_code == 400 and s.status_code == 400 and up.requests == []
+    assert "audit" in r.json()["error"]["message"]
+
+
+async def test_unwritable_audit_path_zero_upstream_calls(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    cfg = make_cfg(tmp_path)
+    cfg.policy.audit = AuditConfig(path=str(blocker / "audit.jsonl"))
+    up = Upstream()
+    async with client(cfg, up) as c:
+        r = await c.post("/v1/messages", json=msg("hi"), headers=H)
+    assert r.status_code == 400 and up.requests == []
+
+
+async def test_late_audit_failure_is_reported(tmp_path, monkeypatch, capsys):
+    from cui_guard import audit as audit_mod
+
+    def parts(ph):
+        return ["a ", ph]
+
+    up = Upstream(stream_handler(parts))
+    async with client(make_cfg(tmp_path), up) as c:
+        monkeypatch.setattr(
+            audit_mod.AuditLog, "record", lambda *a, **k: (_ for _ in ()).throw(audit_mod.AuditUnavailable())
+        )
+        r = await c.post("/v1/messages", json=msg(f"ping {HOST}", stream=True), headers=H)
+    assert r.status_code == 200
+    assert "audit record could not be written" in capsys.readouterr().err
+
+
+async def test_loopback_upstream_ignores_proxy_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+    cfg = make_cfg(tmp_path)
+    for url, expect in (("http://127.0.0.1:9999", False), ("http://localhost:1", False),
+                        ("http://[::1]:1", False), ("https://llm.example.invalid", True)):
+        cfg.lane = Endpoint("public", url, ("anthropic",), Trust.PUBLIC, "env:X")
+        app = create_app(cfg)
+        assert app.state.client._trust_env is expect
+        await app.state.client.aclose()
 
 
 def sse_bytes(events):
@@ -240,7 +306,7 @@ async def test_ping_while_holding_back(tmp_path, monkeypatch):
 
     def handler(req):
         async def body():
-            for e in stream_events(["hello"]):
+            for e in stream_events(["see CG_PER"]):
                 yield sse_bytes([e])
             await asyncio.sleep(0.3)
             for e in [{"type": "content_block_stop", "index": 0}, {"type": "message_stop"}]:
@@ -251,6 +317,32 @@ async def test_ping_while_holding_back(tmp_path, monkeypatch):
     async with client(make_cfg(tmp_path), Upstream(handler)) as c:
         r = await c.post("/v1/messages", json=msg("hi", stream=True), headers=H)
     assert "ping" in [e.event for e in parse_sse(r.content)]
+
+
+async def test_ping_during_continuous_tool_args(tmp_path, monkeypatch):
+    monkeypatch.setattr(gw, "PING_INTERVAL_S", 0.05)
+
+    def handler(req):
+        async def body():
+            yield sse_bytes(
+                [
+                    {"type": "message_start", "message": {"id": "m", "type": "message", "role": "assistant", "content": []}},
+                    {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t", "name": "n", "input": {}}},
+                ]
+            )
+            for i in range(15):
+                d = {"type": "input_json_delta", "partial_json": "" if i == 0 else " "}
+                yield sse_bytes([{"type": "content_block_delta", "index": 0, "delta": {**d, "partial_json": '{"a":' if i == 0 else " "}}])
+                await asyncio.sleep(0.02)
+            yield sse_bytes([{"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "1}"}}])
+            yield sse_bytes([{"type": "content_block_stop", "index": 0}, {"type": "message_stop"}])
+
+        return httpx.Response(200, content=body())
+
+    async with client(make_cfg(tmp_path), Upstream(handler)) as c:
+        r = await c.post("/v1/messages", json=msg("hi", stream=True), headers=H)
+    names = [e.event for e in parse_sse(r.content)]
+    assert "ping" in names[: names.index("content_block_stop")]
 
 
 async def test_one_audit_record_per_request(tmp_path):
@@ -282,6 +374,7 @@ async def test_format_mismatch_400(tmp_path):
         r = await c.post("/v1/messages", json=msg("hi"), headers=H)
     assert r.status_code == 400 and "anthropic" in r.json()["error"]["message"]
     assert up.requests == []
+    assert [r["action"] for r in audit_rows(tmp_path)] == ["rejected"]
 
 
 def test_config_json_roundtrip(tmp_path):

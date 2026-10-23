@@ -262,6 +262,11 @@ class _AnthropicStream:
             self._leftover += n
             self.notes[:] = [f"leftover_placeholders={self._leftover}"]
 
+    @property
+    def pending(self) -> bool:
+        """True while text is held back or tool-call arguments are buffered."""
+        return bool(self._has_args) or any(hb._pending for hb in self._text.values())
+
     @staticmethod
     def _delta_event(index: int, delta: dict) -> SSEEvent:
         return SSEEvent(
@@ -384,6 +389,9 @@ class AnthropicAdapter:
 
     def stream_rewriter(self, smap: SessionMap) -> _AnthropicStream:
         return _AnthropicStream(smap)
+
+    def keepalive(self) -> SSEEvent:
+        return SSEEvent("ping", _dump({"type": "ping"}))
 
     def error_body(self, message: str) -> dict:
         return {"type": "error", "error": {"type": "invalid_request_error", "message": message}}
