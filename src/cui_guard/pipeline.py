@@ -176,18 +176,10 @@ class Pipeline:
             self._unchanged.add((digest, len(self._smap)))
 
     def _opaque(self, d: Decision, op: Opaque) -> None:
-        digest = _sha256(f"{op.kind}:{op.location}")
-        excerpt = f"opaque {op.kind} content"
-        cls = DetClass.OPAQUE_CONTENT
-        if op.kind in _ALWAYS_BLOCKED_OPAQUE and self._trust != Trust.LOCAL:
-            self._add_block(d, "opaque-content", cls, Action.BLOCK_HARD,
-                            op.location, excerpt, digest)  # fmt: skip
-            return
-        action = self._policy.action_for_class(cls, self._trust)
-        if action == Action.ALLOW:
-            return
-        if action == Action.BLOCK_HARD:
-            self._add_block(d, "opaque-content", cls, action, op.location, excerpt, digest)
-            return
+        forced = op.kind in _ALWAYS_BLOCKED_OPAQUE and self._trust != Trust.LOCAL
+        if not forced:
+            action = self._policy.action_for_class(DetClass.OPAQUE_CONTENT, self._trust)
+            if action == Action.ALLOW:
+                return
         d.replace_opaque.add(op.index)
         d.hit_counts["opaque-content"] = d.hit_counts.get("opaque-content", 0) + 1

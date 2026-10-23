@@ -82,11 +82,17 @@ def test_image_replaced_on_public_allowed_on_local():
     assert d.forward and d.replace_opaque == set()
 
 
-def test_server_tool_blocked_on_non_local():
+def test_server_tool_stripped_not_blocked():
     v = view("hi", opaque=[Opaque(0, "loc", "server_tool")])
-    d = make(Trust.APPROVED)[0].evaluate(v)
-    assert not d.forward and d.blocked[0].rule_id == "opaque-content"
-    assert make(Trust.LOCAL)[0].evaluate(v).forward
+    for trust in (Trust.PUBLIC, Trust.APPROVED):
+        d = make(trust)[0].evaluate(v)
+        assert d.forward and d.replace_opaque == {0}
+
+
+def test_local_lane_server_tool_allowed():
+    v = view("hi", opaque=[Opaque(0, "loc", "server_tool")])
+    d = make(Trust.LOCAL)[0].evaluate(v)
+    assert d.forward and d.replace_opaque == set()
 
 
 def test_unparseable_blocks_hard():
