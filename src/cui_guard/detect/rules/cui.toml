@@ -1,0 +1,128 @@
+# CUI-marking detectors.
+# Ported from docs/research/01-cui-classification-rules.md, "Detector spec".
+
+[[rule]]
+id = "cui-banner"
+class = "cui-marking"
+regex = '''^[ \t]*(CUI|CONTROLLED)(//[A-Z0-9 ,/\-]+)?[ \t]*\r?$'''
+flags = ["MULTILINE"]
+verified = true
+source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2002"
+
+[[rule]]
+id = "cui-specified-category"
+class = "cui-marking"
+regex = '''CUI//SP-[A-Z]+(/SP-[A-Z]+)*'''
+verified = true
+source = "https://www.archives.gov/cui/registry/category-marking-list.html"
+
+[[rule]]
+id = "cui-basic-category"
+class = "cui-marking"
+regex = '''CUI//(ISVI|OPSEC|PHYS|LEI|PRIVILEGE|DCRIT)'''
+verified = true
+source = "https://www.archives.gov/cui/registry/category-marking-list.html"
+
+[[rule]]
+id = "cui-joint-sp"
+class = "cui-marking"
+regex = '''CUI//SP-[A-Z]+(/SP-[A-Z]+)*//[A-Z][A-Z0-9 ,/\-]*'''
+verified = false
+source = "model-knowledge"
+
+[[rule]]
+id = "cui-ldc"
+class = "cui-marking"
+regex = '''\b(NOFORN|FED ONLY|FEDCON|NOCON|DL ONLY|RELIDO|REL TO [A-Z, ]+|DISPLAY ONLY [A-Z, ]+|Attorney-Client|Attorney-WP)\b'''
+verified = true
+source = "https://www.archives.gov/cui/registry/limited-dissemination"
+
+[[rule]]
+id = "cui-ldc-portion"
+class = "cui-marking"
+regex = '''\((NF|AC|AWP|FED ONLY|FEDCON|NOCON|DL ONLY|RELIDO)\)'''
+verified = true
+source = "https://www.archives.gov/cui/registry/limited-dissemination"
+
+# FISA and PROPIN are control markings listed in the classified-markings row
+# (model knowledge); they are also CUI-side dissemination strings.
+[[rule]]
+id = "cui-control-marking-shared"
+class = "cui-marking"
+regex = '''//(NOFORN|REL TO [A-Z, ]+|RELIDO|FISA|PROPIN)(?![A-Za-z0-9])'''
+verified = false
+source = "model-knowledge"
+
+[[rule]]
+id = "cui-portion-mark"
+class = "cui-marking"
+regex = '''\(CUI\)|\(CUI//[A-Z\-/]+\)|\(U//FOUO\)'''
+verified = false
+source = "model-knowledge"
+
+# (U) is anchored to line start: it is common in running text otherwise.
+[[rule]]
+id = "cui-portion-mark-u"
+class = "cui-marking"
+regex = '''^[ \t]*\(U\)'''
+flags = ["MULTILINE"]
+verified = false
+source = "model-knowledge"
+
+[[rule]]
+id = "cui-designation-controlled-by"
+class = "cui-marking"
+regex = '''Controlled by:'''
+verified = true
+source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2002"
+
+[[rule]]
+id = "cui-designation-block"
+class = "cui-marking"
+regex = '''CUI Category:|Limited Dissemination Control:|Distribution/Dissemination Control:|POC:'''
+verified = false
+source = "model-knowledge"
+
+[[rule]]
+id = "cui-legacy-acronyms"
+class = "cui-marking"
+regex = '''\b(FOUO|SBU|LES|LOU)\b'''
+verified = false
+source = "model-knowledge"
+
+# Phrases are matched case-insensitively so all-caps banners are caught.
+[[rule]]
+id = "cui-legacy-phrases"
+class = "cui-marking"
+regex = '''\b(For Official Use Only|Sensitive But Unclassified|Law Enforcement Sensitive|Official Use Only)\b'''
+flags = ["IGNORECASE"]
+verified = false
+source = "model-knowledge"
+
+[[rule]]
+id = "cui-dod-distribution-statement"
+class = "cui-marking"
+regex = '''Distribution Statement [A-F]\b'''
+verified = true
+source = "https://sgp.fas.org/library/ipshbook/app_d.html"
+
+[[rule]]
+id = "cui-dod-distribution-authorized"
+class = "cui-marking"
+regex = '''Distribution authorized to (U\.S\. Government Agencies( and their contractors)?|the Department of Defense and U\.S\. DoD contractors|DoD components) only|Further dissemination only as directed by'''
+verified = true
+source = "https://sgp.fas.org/library/ipshbook/app_d.html"
+
+[[rule]]
+id = "cui-export-warning"
+class = "cui-marking"
+regex = '''WARNING\s*[-–—]\s*This document contains technical data whose export is restricted by the Arms Export Control Act'''
+verified = true
+source = "https://sgp.fas.org/library/ipshbook/app_d.html"
+
+[[rule]]
+id = "cui-export-acronyms"
+class = "cui-marking"
+regex = '''\b(ITAR|EAR)\b|Export Control Reform Act'''
+verified = true
+source = "https://sgp.fas.org/library/ipshbook/app_d.html"

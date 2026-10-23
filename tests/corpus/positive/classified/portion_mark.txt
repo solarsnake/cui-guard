@@ -1,0 +1,2 @@
+Synthetic header
+(S//NF) The synthetic portion text.

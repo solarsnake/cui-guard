@@ -1,0 +1,72 @@
+# Classified-marking detectors (block-hard on every lane).
+# Ported from docs/research/01-cui-classification-rules.md, "Detector spec".
+
+[[rule]]
+id = "classified-banner"
+class = "classified-marking"
+regex = '''^[ \t]*(TOP SECRET|SECRET|CONFIDENTIAL)(//.+)?[ \t]*\r?$'''
+flags = ["MULTILINE"]
+verified = true
+source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
+
+# Anchored to line start: (S) / (C) mid-sentence are not portion marks.
+[[rule]]
+id = "classified-portion-mark"
+class = "classified-marking"
+regex = '''^[ \t]*\((TS|S|C)(//[A-Z\-/ ,]+)?\)'''
+flags = ["MULTILINE"]
+verified = true
+source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
+
+[[rule]]
+id = "classified-authority-classified-by"
+class = "classified-marking"
+regex = '''Classified By:'''
+verified = true
+source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
+
+[[rule]]
+id = "classified-authority-derived-from"
+class = "classified-marking"
+regex = '''Derived From:'''
+verified = false
+source = "model-knowledge"
+
+[[rule]]
+id = "classified-authority-reason"
+class = "classified-marking"
+regex = '''Reason:\s*1\.4\(?[a-h]\)?'''
+verified = true
+source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
+
+[[rule]]
+id = "classified-authority-declassify-on"
+class = "classified-marking"
+regex = '''Declassify On:\s*(\d{8}|50X1-HUM|50X2-WMD)'''
+verified = true
+source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"
+
+# Classified-only control markings. Markings shared with CUI limited
+# dissemination controls (NOFORN, REL TO, RELIDO, FISA, PROPIN) live in cui.toml.
+# 2001.24 names no strings; the list is model knowledge.
+[[rule]]
+id = "classified-control-marking"
+class = "classified-marking"
+regex = '''//(SI|TK|HCS|SCI|SAP|SAR-[A-Z]+|ORCON-USGOV|ORCON|FGI|FRD|RD|TFNI|IMCON)(?![A-Za-z0-9])'''
+verified = false
+source = "model-knowledge"
+
+[[rule]]
+id = "classified-control-marking-fgi-c"
+class = "classified-marking"
+regex = '''\(FGI-C\)'''
+verified = true
+source = "https://www.law.cornell.edu/cfr/text/32/2001.24"
+
+[[rule]]
+id = "classified-handling-words"
+class = "classified-marking"
+regex = '''Derived From|Declassify On|Classified By'''
+flags = ["IGNORECASE"]
+verified = false
+source = "model-knowledge"
