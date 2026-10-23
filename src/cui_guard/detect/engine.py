@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections import OrderedDict
 
 from cui_guard.detect.heuristics import controlled_content_hits
@@ -24,28 +25,58 @@ def _dedupe(hits: list[Hit]) -> list[Hit]:
     return list(best.values())
 
 
-def _resolve_overlaps(hits: list[Hit]) -> list[Hit]:
-    """Among placeholder hits (kind set), keep the longest; secret wins.
+def _priority(h: Hit) -> int:
+    if h.cls is DetClass.SECRET:
+        return 0
+    return 2 if h.rule_id.startswith("ner.") else 1
 
-    Secrets are placed first (longest first) so an identifier that merely
-    spans a secret (e.g. user:pw@host read as an email) cannot swallow it.
-    """
-    placeholder = [h for h in hits if h.kind is not None]
-    order = sorted(
-        placeholder,
-        key=lambda h: (
-            h.cls is not DetClass.SECRET,
-            -(h.end - h.start),
-            h.start,
-            h.rule_id,
-        ),
+
+def _rank(h: Hit) -> tuple[int, int, str]:
+    return (_priority(h), -(h.end - h.start), h.rule_id)
+
+
+def _merge_pair(a: Hit, b: Hit, text: str) -> Hit | None:
+    """Combine two overlapping placeholder hits; None means drop `a` only."""
+    win = min(a, b, key=_rank)
+    contains_a = a.start <= b.start and b.end <= a.end
+    contains_b = b.start <= a.start and a.end <= b.end
+    # A lower-priority hit that swallows a secret must not displace it.
+    if contains_a and not contains_b and b.cls is DetClass.SECRET and a is not win:
+        return b
+    if contains_b and not contains_a and a.cls is DetClass.SECRET and b is not win:
+        return a
+    start, end = min(a.start, b.start), max(a.end, b.end)
+    return Hit(
+        win.rule_id, win.cls, start, end, text[start:end], win.kind, win.verified
     )
-    kept: list[Hit] = []
-    for h in order:
-        if all(h.end <= k.start or h.start >= k.end for k in kept):
-            kept.append(h)
-    dropped = {id(h) for h in placeholder} - {id(h) for h in kept}
-    return [h for h in hits if id(h) not in dropped]
+
+
+def _resolve_overlaps(hits: list[Hit], text: str) -> list[Hit]:
+    """Merge overlapping placeholder hits (kind set); others are untouched.
+
+    Partial overlaps become one hit over the union. Priority picks the
+    kind: secret > rule-based identifier > NER. A non-secret hit that
+    fully contains a secret is dropped, so the secret keeps its own
+    placeholder (e.g. user:pw@host read as an email).
+    """
+    others = [h for h in hits if h.kind is None]
+    work = sorted((h for h in hits if h.kind is not None), key=lambda h: h.start)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(work)):
+            for j in range(i + 1, len(work)):
+                a, b = work[i], work[j]
+                if a.end <= b.start or b.end <= a.start:
+                    continue
+                merged = _merge_pair(a, b, text)
+                work = [h for k, h in enumerate(work) if k not in (i, j)]
+                work.append(merged)
+                changed = True
+                break
+            if changed:
+                break
+    return others + work
 
 
 class Detector:
@@ -59,17 +90,21 @@ class Detector:
         self._identifiers = identifiers
         self._ner = ner
         self._cache: OrderedDict[str, tuple[Hit, ...]] = OrderedDict()
+        self._lock = threading.Lock()
 
     def scan(self, text: str) -> list[Hit]:
         key = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-        cached = self._cache.get(key)
-        if cached is not None:
-            self._cache.move_to_end(key)
-            return list(cached)
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                self._cache.move_to_end(key)
+                return list(cached)
         hits = self._scan_uncached(text)
-        self._cache[key] = tuple(hits)
-        if len(self._cache) > CACHE_MAXSIZE:
-            self._cache.popitem(last=False)
+        with self._lock:
+            self._cache[key] = tuple(hits)
+            self._cache.move_to_end(key)
+            while len(self._cache) > CACHE_MAXSIZE:
+                self._cache.popitem(last=False)
         return list(hits)
 
     def _scan_uncached(self, text: str) -> list[Hit]:
@@ -78,5 +113,5 @@ class Detector:
         hits += controlled_content_hits(text, self._identifiers)
         if self._ner is not None:
             hits += self._ner.analyze(text)
-        hits = _resolve_overlaps(_dedupe(hits))
+        hits = _resolve_overlaps(_dedupe(hits), text)
         return sorted(hits, key=lambda h: (h.start, h.end, h.rule_id))

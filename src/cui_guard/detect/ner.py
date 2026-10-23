@@ -7,6 +7,8 @@ from typing import Protocol
 
 from cui_guard.model import DetClass, Hit
 
+_MODEL = "en_core_web_sm"
+
 
 class NerBackend(Protocol):
     def analyze(self, text: str) -> list[Hit]: ...
@@ -38,11 +40,21 @@ def load_presidio() -> NerBackend | None:
         if (
             importlib.util.find_spec("presidio_analyzer") is None
             or importlib.util.find_spec("spacy") is None
+            or importlib.util.find_spec(_MODEL) is None
         ):
             return None
         from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer.nlp_engine import NlpEngineProvider
 
-        return _PresidioBackend(AnalyzerEngine(supported_languages=["en"]))
+        nlp = NlpEngineProvider(
+            nlp_configuration={
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": _MODEL}],
+            }
+        ).create_engine()
+        return _PresidioBackend(
+            AnalyzerEngine(nlp_engine=nlp, supported_languages=["en"])
+        )
     except Exception:  # noqa: BLE001
         # Missing spacy model or any other setup failure: NER stays off.
         return None
