@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import bisect
 import ipaddress
 import re
 
-from cui_guard.detect.identifiers import IdentifierConfig, identifier_hits
+from cui_guard.detect.identifiers import (
+    BUILTIN_DOMAINS,
+    IdentifierConfig,
+    _host_pattern,
+)
 from cui_guard.detect.normalize import normalize
 from cui_guard.model import DetClass, Hit
 
@@ -102,9 +107,27 @@ def _stig(norm: str) -> tuple[int, int] | None:
     return None
 
 
+def _header_cells(line: str) -> list[str] | None:
+    """Cells of a table-header-shaped line, or None if not table-shaped."""
+    for delim in ("|", "\t"):
+        if delim in line:
+            return line.split(delim)
+    if line.count(",") >= 2:
+        cells = line.split(",")
+        if all(len(c.strip()) <= 40 for c in cells):
+            return cells
+    return None
+
+
 def _poam(norm: str) -> tuple[int, int] | None:
     for start, end, line in _lines(norm):
-        if sum(1 for p in _POAM_TERM_RES if p.search(line)) >= 3:
+        cells = _header_cells(line)
+        if cells is None:
+            continue
+        terms = {
+            i for i, p in enumerate(_POAM_TERM_RES) if any(p.search(c) for c in cells)
+        }
+        if len(terms) >= 3:
             return start, end
     return None
 
@@ -140,26 +163,31 @@ def _fw_dump(norm: str, cfg: IdentifierConfig) -> tuple[int, int] | None:
     return _span(matched) if matched else None
 
 
-def _cve_internal_host(
-    norm: str, index_map: list[int], text: str, cfg: IdentifierConfig
-) -> tuple[int, int] | None:
-    inv = {o: n for n, o in enumerate(index_map)}
-    hosts = []  # (line, norm_start, norm_end) per host hit
-    for h in identifier_hits(text, cfg):
-        if h.kind != "host":
-            continue
-        ns = inv.get(h.start)
-        ne = inv.get(h.end - 1)
-        if ns is None or ne is None:
-            continue
-        hosts.append((norm.count("\n", 0, ns), ns, ne + 1))
+def _cve_internal_host(norm: str, cfg: IdentifierConfig) -> tuple[int, int] | None:
+    cves = list(_CVE.finditer(norm))
+    if not cves:
+        return None
+    # Same host pattern identifier_hits uses for kind="host", run on normalized text.
+    host_pat = _host_pattern(BUILTIN_DOMAINS + cfg.domains)
+    if host_pat is None:
+        return None
+    host_matches = list(host_pat.finditer(norm))
+    if not host_matches:
+        return None
+    line_starts = [m.end() for m in re.finditer("\n", norm)]  # starts of lines 1..
+
+    def line_of(pos: int) -> int:
+        return bisect.bisect_right(line_starts, pos)
+
+    hosts = sorted((line_of(m.start()), m.start(), m.end()) for m in host_matches)
+    host_lines = [h[0] for h in hosts]
     spans: list[tuple[int, int]] = []
-    for m in _CVE.finditer(norm):
-        cve_line = norm.count("\n", 0, m.start())
-        for hl, ns, ne in hosts:
-            if abs(hl - cve_line) <= _CVE_WINDOW:
-                spans.append((min(m.start(), ns), max(m.end(), ne)))
-                break
+    for m in cves:
+        cve_line = line_of(m.start())
+        i = bisect.bisect_left(host_lines, cve_line - _CVE_WINDOW)
+        if i < len(hosts) and hosts[i][0] <= cve_line + _CVE_WINDOW:
+            _, ns, ne = hosts[i]
+            spans.append((min(m.start(), ns), max(m.end(), ne)))
     return _span(spans) if spans else None
 
 
@@ -171,7 +199,7 @@ def controlled_content_hits(text: str, cfg: IdentifierConfig) -> list[Hit]:
         ("cc.stig", _stig(norm)),
         ("cc.poam", _poam(norm)),
         ("cc.fw_dump", _fw_dump(norm, cfg)),
-        ("cc.cve_internal_host", _cve_internal_host(norm, index_map, text, cfg)),
+        ("cc.cve_internal_host", _cve_internal_host(norm, cfg)),
     ]
     hits = [
         _make_hit(rule_id, text, index_map, span[0], span[1])

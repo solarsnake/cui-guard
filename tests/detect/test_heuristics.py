@@ -1,8 +1,9 @@
+import time
 from pathlib import Path
 
 import pytest
 
-from cui_guard.detect.heuristics import controlled_content_hits
+from cui_guard.detect.heuristics import _cve_internal_host, controlled_content_hits
 from cui_guard.detect.identifiers import IdentifierConfig
 from cui_guard.model import DetClass
 
@@ -61,3 +62,44 @@ def test_cve_far_from_host_not_flagged():
 
 def test_single_stig_vuln_id_not_enough():
     assert controlled_content_hits("ticket V-12345 closed", CFG) == []
+
+
+PROSE = "Weakness, POC and Status tracking in our weekly status meeting"
+
+
+def test_poam_prose_not_flagged():
+    assert controlled_content_hits(PROSE, CFG) == []
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Weakness | POC | Status",
+        "Weakness\tPOC\tStatus",
+        "Weakness,POC,Milestone,Status",
+    ],
+)
+def test_poam_table_headers_hit(header):
+    assert [h.rule_id for h in controlled_content_hits(header, CFG)] == ["cc.poam"]
+
+
+def test_poam_csv_with_long_cell_not_flagged():
+    line = "Weakness," + "x" * 50 + ",POC,Status"
+    assert controlled_content_hits(line, CFG) == []
+
+
+def _timed(text, cfg):
+    start = time.perf_counter()
+    _cve_internal_host(text, cfg)
+    return time.perf_counter() - start
+
+
+def test_cve_scan_perf_no_hosts():
+    text = "\n".join(f"CVE-2099-{10000 + i} noted" for i in range(20000))
+    assert _timed(text, IdentifierConfig()) < 0.05
+
+
+def test_cve_scan_perf_one_host():
+    lines = [f"CVE-2099-{10000 + i} noted" for i in range(20000)]
+    lines[10] = "host a.example.mil"
+    assert _timed("\n".join(lines), IdentifierConfig()) < 0.1
