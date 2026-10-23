@@ -1,0 +1,45 @@
+# Built-in human-facing copy. An org messages_file replaces any key it defines.
+# Lines containing {poc} are dropped when the policy sets no point of contact.
+
+[warn]
+cui_public = """
+WARNING: POSSIBLE CUI BEING SENT TO A PUBLIC AI SERVICE.
+If this content is CUI, sending it is prohibited under ISOO Notice 2026-01 ¶7 (federal personnel) and DFARS 252.204-7012 (contractors).
+It may be a reportable cyber incident. Contractors must report within 72 hours.
+It can carry contractual, administrative and clearance consequences.
+By overriding, you assert that this content is not CUI.
+If you are unsure, do not override.
+Point of contact: {poc}.
+"""
+
+controlled_public = """
+WARNING: CONTROLLED INFORMATION MAY BE SENT TO A PUBLIC AI SERVICE.
+This content resembles controlled information. If it is CUI, sending it is prohibited under ISOO Notice 2026-01 ¶7 (federal personnel) and DFARS 252.204-7012 (contractors).
+It may be a reportable cyber incident. Contractors must report within 72 hours.
+It can carry contractual, administrative and clearance consequences.
+By overriding, you assert that this content is not CUI.
+If you are unsure, do not override.
+Point of contact: {poc}.
+"""
+
+generic = """
+WARNING: THIS CONTENT WAS BLOCKED BY YOUR POLICY.
+Overriding sends this exact content to the destination service. You are responsible for that decision, and it is recorded in the audit log with your justification.
+If you are unsure, do not override.
+Point of contact: {poc}.
+"""
+
+[stop]
+classified = """
+STOP. Classified markings were found in this content.
+Classified information on an unclassified system is a potential spill that has already occurred.
+Stop work and contact your security officer now.
+Security point of contact: {poc}.
+Nothing was forwarded.
+"""
+
+[blocked]
+no_override = """
+No override available.
+If you believe this block is wrong, contact {poc}.
+"""

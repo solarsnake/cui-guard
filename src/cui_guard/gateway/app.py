@@ -9,6 +9,7 @@ import hmac
 import json
 import re
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -32,6 +33,7 @@ from cui_guard.detect.engine import Detector
 from cui_guard.detect.ner import load_presidio
 from cui_guard.detect.rules import load_builtin_rules
 from cui_guard.model import Action, DetClass, Trust
+from cui_guard.override.human import load_messages, render, warning_key
 from cui_guard.override.store import OverrideStore
 from cui_guard.pipeline import BlockInfo, Decision, Pipeline
 from cui_guard.policy.schema import EffectivePolicy, Endpoint
@@ -123,16 +125,20 @@ def _fail_block(rule_id: str, location: str, why: str) -> Decision:
     return Decision(blocked=[block], hit_counts={rule_id: 1})
 
 
-def _block_message(decision: Decision, offered: bool) -> str:
+def _block_message(
+    decision: Decision, offered: bool, messages: dict[str, str], poc: str | None
+) -> str:
     parts = [
         f"{b.rule_id} [{b.cls.value}] at {b.location}: {b.excerpt}" for b in decision.blocked
     ]
     ids = [b.override_id for b in decision.blocked if b.override_id]
     msg = "cui-guard blocked this request: " + "; ".join(parts) + ". "
-    if offered and ids:
+    if any(b.cls == DetClass.CLASSIFIED_MARKING for b in decision.blocked):
+        msg += " ".join(render(messages["stop.classified"], poc).split())
+    elif offered and ids:
         msg += f"Override offered on your screen (ID {', '.join(dict.fromkeys(ids))})."
     else:
-        msg += "No override available."
+        msg += " ".join(render(messages["blocked.no_override"], poc).split())
     return msg
 
 
@@ -158,6 +164,7 @@ def create_app(
     }
     smap = SessionMap()
     overrides = OverrideStore()
+    messages = load_messages(policy.messages_file)  # an unreadable org file fails startup
     detector = Detector(load_builtin_rules() + policy.extra_rules, policy.identifiers, load_presidio())
     pipeline = Pipeline(policy, detector, smap, lane.trust, overrides)
     audit = AuditLog(policy.audit, cfg.session_id, sha256_json(policy.to_dict()))
@@ -170,6 +177,8 @@ def create_app(
     base_url = lane.url.rstrip("/")
     tasks: set[asyncio.Task] = set()
     state = {"leftover_notified": False}
+    in_flight: set[str] = set()
+    in_flight_lock = threading.Lock()
 
     def notify(fn, *args) -> None:
         if channel is None:
@@ -183,6 +192,49 @@ def create_app(
         t = asyncio.ensure_future(run())
         tasks.add(t)
         t.add_done_callback(tasks.discard)
+
+    def run_override_flow(block: BlockInfo) -> None:
+        """Human flow for one override ID, on its own thread: notify, justify, authenticate, grant."""
+        assert channel is not None and block.override_id is not None
+        oid = block.override_id
+        try:
+            channel.notify_block(block, True)
+            warning = render(messages[warning_key(block)], policy.poc)
+            justification = channel.request_justification(block, warning)
+            if not justification or not justification.strip():
+                return
+            if not channel.authenticate(f"cui-guard override {oid}: {block.rule_id}"):
+                return
+            entry = {
+                "id": oid, "rule_id": block.rule_id, "content_hash": block.content_hash,
+                "justification": justification, "status": "granted",
+            }  # fmt: skip
+            # audit first: if the record cannot be written, nothing is granted
+            audit.record(
+                agent=cfg.agent, lane=lane.name, trust=lane.trust,
+                decision=Decision(hit_counts={block.rule_id: 1}),
+                request_hash=block.content_hash, overrides=[entry], action="override",
+            )  # fmt: skip
+            overrides.grant(oid, justification)
+        except Exception:  # noqa: BLE001, S110 - any failure means no override
+            pass
+        finally:
+            with in_flight_lock:
+                in_flight.discard(oid)
+
+    def start_override_flow(block: BlockInfo) -> None:
+        oid = block.override_id
+        if channel is None or oid is None:
+            return
+        with in_flight_lock:
+            if oid in in_flight:
+                return  # a dialog for this content is already open
+            in_flight.add(oid)
+        try:
+            threading.Thread(target=run_override_flow, args=(block,), daemon=True).start()
+        except Exception:  # noqa: BLE001
+            with in_flight_lock:
+                in_flight.discard(oid)
 
     def notify_leftover(count: int) -> None:
         if channel is None or count <= 0 or state["leftover_notified"]:
@@ -222,13 +274,21 @@ def create_app(
     def response_headers(resp: httpx.Response) -> dict[str, str]:
         return {k: v for k, v in resp.headers.items() if k.lower() not in _DROP_RESPONSE}
 
+    def override_possible(decision: Decision) -> bool:
+        """A human prompt is only offered when nothing in the request is block-hard."""
+        return (
+            channel is not None
+            and not cfg.headless
+            and all(b.action != Action.BLOCK_HARD for b in decision.blocked)
+        )
+
     def record(
         decision: Decision, request_hash: str, leftover: int = 0, action: str | None = None
     ) -> None:
         offered = [
             {"id": b.override_id, "rule_id": b.rule_id, "status": "offered"}
             for b in decision.blocked
-            if b.override_id and channel is not None and not cfg.headless
+            if b.override_id and override_possible(decision)
         ]
         audit.record(
             agent=cfg.agent, lane=lane.name, trust=lane.trust, decision=decision,
@@ -264,13 +324,16 @@ def create_app(
             notify(channel.notify_block, info, False)
 
     async def blocked_response(adapter: Adapter, decision: Decision, request_hash: str) -> Response:
-        offered = channel is not None and not cfg.headless
-        msg = _block_message(decision, offered)
+        offered = override_possible(decision)
+        msg = _block_message(decision, offered, messages, policy.poc)
         if not await arecord(decision, request_hash):
             msg = "cui-guard blocked this request: audit log unavailable."
         if channel is not None:
             for b in decision.blocked:
-                notify(channel.notify_block, b, offered and b.override_id is not None)
+                if offered and b.override_id is not None and b.action == Action.BLOCK:
+                    start_override_flow(b)
+                else:
+                    notify(channel.notify_block, b, False)
         return JSONResponse(adapter.error_body(msg), status_code=adapter.block_status)
 
     async def hello(request: Request) -> Response:
