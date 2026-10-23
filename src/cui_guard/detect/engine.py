@@ -35,20 +35,48 @@ def _rank(h: Hit) -> tuple[int, int, str]:
     return (_priority(h), -(h.end - h.start), h.rule_id)
 
 
-def _merge_pair(a: Hit, b: Hit, text: str) -> Hit | None:
-    """Combine two overlapping placeholder hits; None means drop `a` only."""
+def _merge_pair(a: Hit, b: Hit, text: str) -> tuple[Hit, Hit | None]:
+    """Combine two overlapping placeholder hits into (kept, dropped container)."""
     win = min(a, b, key=_rank)
     contains_a = a.start <= b.start and b.end <= a.end
     contains_b = b.start <= a.start and a.end <= b.end
     # A lower-priority hit that swallows a secret must not displace it.
     if contains_a and not contains_b and b.cls is DetClass.SECRET and a is not win:
-        return b
+        return b, a
     if contains_b and not contains_a and a.cls is DetClass.SECRET and b is not win:
-        return a
+        return a, b
     start, end = min(a.start, b.start), max(a.end, b.end)
-    return Hit(
+    merged = Hit(
         win.rule_id, win.cls, start, end, text[start:end], win.kind, win.verified
     )
+    return merged, None
+
+
+def _remainders(container: Hit, kept: list[Hit], text: str) -> list[Hit]:
+    """Sub-spans of a dropped container not covered by kept hits (alnum only)."""
+    pieces: list[Hit] = []
+    pos = container.start
+    covers = sorted(
+        (k for k in kept if k.start < container.end and k.end > container.start),
+        key=lambda k: k.start,
+    )
+    for k in [*covers, None]:
+        stop = container.end if k is None else min(k.start, container.end)
+        if stop > pos and any(c.isalnum() for c in text[pos:stop]):
+            pieces.append(
+                Hit(
+                    container.rule_id,
+                    container.cls,
+                    pos,
+                    stop,
+                    text[pos:stop],
+                    container.kind,
+                    container.verified,
+                )
+            )
+        if k is not None:
+            pos = max(pos, k.end)
+    return pieces
 
 
 def _resolve_overlaps(hits: list[Hit], text: str) -> list[Hit]:
@@ -56,11 +84,13 @@ def _resolve_overlaps(hits: list[Hit], text: str) -> list[Hit]:
 
     Partial overlaps become one hit over the union. Priority picks the
     kind: secret > rule-based identifier > NER. A non-secret hit that
-    fully contains a secret is dropped, so the secret keeps its own
-    placeholder (e.g. user:pw@host read as an email).
+    fully contains a secret is split: the secret keeps its own
+    placeholder (e.g. user:pw@host read as an email) and the container's
+    uncovered remainder pieces that hold alphanumerics stay masked.
     """
     others = [h for h in hits if h.kind is None]
     work = sorted((h for h in hits if h.kind is not None), key=lambda h: h.start)
+    dropped: list[Hit] = []
     changed = True
     while changed:
         changed = False
@@ -69,13 +99,18 @@ def _resolve_overlaps(hits: list[Hit], text: str) -> list[Hit]:
                 a, b = work[i], work[j]
                 if a.end <= b.start or b.end <= a.start:
                     continue
-                merged = _merge_pair(a, b, text)
+                kept, drop = _merge_pair(a, b, text)
                 work = [h for k, h in enumerate(work) if k not in (i, j)]
-                work.append(merged)
+                work.append(kept)
+                if drop is not None:
+                    dropped.append(drop)
                 changed = True
                 break
             if changed:
                 break
+    pieces = [p for d in dropped for p in _remainders(d, work, text)]
+    if pieces:
+        work += _resolve_overlaps(pieces, text)
     return others + work
 
 

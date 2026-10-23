@@ -1,5 +1,6 @@
 import importlib.util
 import itertools
+import random
 import sys
 import threading
 import types
@@ -28,7 +29,7 @@ def test_union_of_sources():
 def test_overlap_resolution():
     text = "https://user:pw123@db.example.mil"
     hits = [h for h in make().scan(text) if h.kind is not None]
-    assert {h.value for h in hits} >= {"pw123", "db.example.mil"}
+    assert sorted(h.value for h in hits) == ["db.example.mil", "pw123"]
     spans = sorted((h.start, h.end) for h in hits)
     assert all(a[1] <= b[0] for a, b in itertools.pairwise(spans))
 
@@ -44,6 +45,55 @@ def test_overlap_longest_wins_secret_ties():
     b = Hit("b", DetClass.SECRET, 0, 5, "x" * 5, "secret")
     c = Hit("c", DetClass.IDENTIFIER, 0, 3, "xxx", "term")
     assert engine._resolve_overlaps([a, b, c], "x" * 5) == [b]
+
+
+def test_container_remainders_stay_masked():
+    text = "Alice Smithson-password99xyz"
+    ner = Hit("ner.person", DetClass.IDENTIFIER, 0, 28, text, "person")
+    sec = Hit("secret.x", DetClass.SECRET, 14, 25, text[14:25], "secret")
+    out = sorted(engine._resolve_overlaps([ner, sec], text), key=lambda h: h.start)
+    assert [(h.start, h.end, h.kind) for h in out] == [
+        (0, 14, "person"),
+        (14, 25, "secret"),
+        (25, 28, "person"),
+    ]
+    assert out[2].value == "xyz"
+
+
+def test_container_remainder_without_alnum_dropped():
+    text = "Alice Smithson-password99-"
+    ner = Hit("ner.person", DetClass.IDENTIFIER, 0, 26, text, "person")
+    sec = Hit("secret.x", DetClass.SECRET, 14, 25, text[14:25], "secret")
+    out = engine._resolve_overlaps([ner, sec], text)
+    assert sorted((h.start, h.end) for h in out) == [(0, 14), (14, 25)]
+
+
+def test_overlap_coverage_property():
+    rng = random.Random(1234)
+    text = "ab cd-ef gh@ij kl_mn op qr"
+    n = len(text)
+    kinds = [
+        ("secret.x", DetClass.SECRET, "secret"),
+        ("id.host", DetClass.IDENTIFIER, "host"),
+        ("id.email", DetClass.IDENTIFIER, "email"),
+        ("ner.person", DetClass.IDENTIFIER, "person"),
+    ]
+    for _ in range(2000):
+        inputs = []
+        for _ in range(rng.randint(2, 4)):
+            s0 = rng.randrange(n - 1)
+            e0 = rng.randint(s0 + 1, n)
+            rid, cls, kind = rng.choice(kinds)
+            inputs.append(Hit(rid, cls, s0, e0, text[s0:e0], kind))
+        out = engine._resolve_overlaps(inputs, text)
+        spans = sorted((h.start, h.end) for h in out)
+        assert all(a[1] <= b[0] for a, b in itertools.pairwise(spans)), inputs
+        covered = {i for h in out for i in range(h.start, h.end)}
+        for h in inputs:
+            for i in range(h.start, h.end):
+                if text[i].isalnum():
+                    assert i in covered, (inputs, out)
+        assert all(h.value == text[h.start : h.end] for h in out)
 
 
 def test_marking_hits_not_dropped_by_overlap():
