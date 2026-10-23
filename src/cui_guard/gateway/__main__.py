@@ -8,10 +8,13 @@ import sys
 import uvicorn
 
 from cui_guard.gateway.app import GatewayConfig, create_app
+from cui_guard.override.human import load_messages, select_channel
 
 
 async def _serve(cfg: GatewayConfig) -> None:
-    app = create_app(cfg)
+    messages = load_messages(cfg.policy.messages_file)
+    channel = select_channel(cfg.headless, messages, cfg.policy.poc)
+    app = create_app(cfg, channel=channel)
     config = uvicorn.Config(
         app, host="127.0.0.1", port=0, log_level="warning", access_log=False, lifespan="on"
     )
