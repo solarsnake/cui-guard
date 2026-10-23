@@ -1,0 +1,102 @@
+# Built-in policy layer (spec 3.4 default baseline, spec 13 profiles).
+# Action table keys are detection classes; columns are lane trust levels.
+
+profile = "cui"
+default_lane = "anthropic"
+
+[audit]
+# "{state_dir}" is expanded when the effective policy is built.
+path = "{state_dir}/audit.jsonl"
+
+[endpoints.anthropic]
+url = "https://api.anthropic.com"
+formats = ["anthropic"]
+trust = "public"
+credential = "env-or-passthrough:ANTHROPIC_API_KEY"
+
+[endpoints.openai]
+url = "https://api.openai.com"
+formats = ["openai-responses", "openai-chat"]
+trust = "public"
+credential = "env:OPENAI_API_KEY"
+
+[endpoints.ollama]
+url = "http://127.0.0.1:11434"
+# Ollama speaks all three wire formats:
+#   https://docs.ollama.com/api/anthropic-compatibility
+#   https://docs.ollama.com/api/openai-compatibility
+formats = ["anthropic", "openai-responses", "openai-chat"]
+trust = "local"
+credential = "none"
+
+# Profile "cui": spec 3.4 table, the default.
+[profiles.cui."classified-marking"]
+public = "block-hard"
+approved = "block-hard"
+local = "block-hard"
+
+[profiles.cui."cui-marking"]
+public = "block"
+approved = "allow"
+local = "allow"
+
+[profiles.cui."controlled-content"]
+public = "block"
+approved = "allow"
+local = "allow"
+
+[profiles.cui."secret"]
+public = "pseudonymize"
+approved = "pseudonymize"
+local = "pseudonymize"
+
+[profiles.cui."identifier"]
+public = "pseudonymize"
+approved = "allow"
+local = "allow"
+
+[profiles.cui."opaque-content"]
+public = "block"
+approved = "allow"
+local = "allow"
+
+[profiles.cui."unparseable"]
+public = "block-hard"
+approved = "block-hard"
+local = "block-hard"
+
+# Profile "general": spec 13. Same as cui except controlled-content is allowed.
+[profiles.general."classified-marking"]
+public = "block-hard"
+approved = "block-hard"
+local = "block-hard"
+
+[profiles.general."cui-marking"]
+public = "block"
+approved = "allow"
+local = "allow"
+
+[profiles.general."controlled-content"]
+public = "allow"
+approved = "allow"
+local = "allow"
+
+[profiles.general."secret"]
+public = "pseudonymize"
+approved = "pseudonymize"
+local = "pseudonymize"
+
+[profiles.general."identifier"]
+public = "pseudonymize"
+approved = "allow"
+local = "allow"
+
+[profiles.general."opaque-content"]
+public = "block"
+approved = "allow"
+local = "allow"
+
+[profiles.general."unparseable"]
+public = "block-hard"
+approved = "block-hard"
+local = "block-hard"
