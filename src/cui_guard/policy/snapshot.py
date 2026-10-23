@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 from cui_guard.detect.identifiers import IdentifierConfig
@@ -28,6 +29,10 @@ _ID_FIELDS = (
     ("jira_projects", "Jira project"),
     ("people", "person"),
 )
+
+
+def _rule_sig(r) -> tuple:
+    return (r.pattern.pattern, r.pattern.flags, r.cls, r.kind)
 
 
 def snapshot_path() -> Path:
@@ -55,10 +60,13 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
         for value in sorted(set(getattr(pi, attr)) - set(getattr(ci, attr))):
             reasons.append(f"{label} removed: {value}")
 
-    cur_ids = {r.id for r in cur.patterns or []}
+    cur_rules = {r.id: r for r in cur.patterns or []}
     for rule in prev.patterns or []:
-        if rule.id not in cur_ids:
+        new_rule = cur_rules.get(rule.id)
+        if new_rule is None:
             reasons.append(f"pattern removed: {rule.id}")
+        elif _rule_sig(new_rule) != _rule_sig(rule):
+            reasons.append(f"pattern changed: {rule.id}")
 
     cur_actions = cur.rule_actions or {}
     for (key, trust), old in sorted((prev.rule_actions or {}).items()):
@@ -151,34 +159,77 @@ def _to_dict(layer: PolicyLayer) -> dict:
     return d
 
 
+def _opt(d: dict, key: str, typ: type):
+    v = d.get(key)
+    if v is not None and not isinstance(v, typ):
+        raise PolicyError(f"snapshot: bad {key}")
+    return v
+
+
+def _strs(v) -> list[str]:
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        raise PolicyError("snapshot: expected list of strings")
+    return v
+
+
 def _from_dict(d: dict) -> PolicyLayer:
     if not isinstance(d, dict) or d.get("source") != "user":
         raise PolicyError("snapshot is not a user layer")
     layer = PolicyLayer(source="user")
-    layer.profile = d.get("profile")
-    layer.default_lane = d.get("default_lane")
+    layer.profile = _opt(d, "profile", str)
+    layer.default_lane = _opt(d, "default_lane", str)
     if "endpoints" in d:
-        layer.endpoints = {
-            n: Endpoint(
-                n, e["url"], tuple(e["formats"]), Trust(e["trust"]), e["credential"]
+        if not isinstance(d["endpoints"], dict):
+            raise PolicyError("snapshot: bad endpoints")
+        eps = {}
+        for n, e in d["endpoints"].items():
+            if not (
+                isinstance(e, dict)
+                and isinstance(e["url"], str)
+                and isinstance(e["credential"], str)
+                and isinstance(e["trust"], str)
+            ):
+                raise PolicyError("snapshot: bad endpoint")
+            eps[n] = Endpoint(
+                n,
+                e["url"],
+                tuple(_strs(e["formats"])),
+                Trust(e["trust"]),
+                e["credential"],
             )
-            for n, e in d["endpoints"].items()
-        }
+        layer.endpoints = eps
     if "identifiers" in d:
+        ids = d["identifiers"]
+        if not isinstance(ids, dict) or set(ids) - {a for a, _ in _ID_FIELDS}:
+            raise PolicyError("snapshot: bad identifiers")
         layer.identifiers = IdentifierConfig(
-            **{k: tuple(v) for k, v in d["identifiers"].items()}
+            **{k: tuple(_strs(v)) for k, v in ids.items()}
         )
     if "patterns" in d:
-        layer.patterns = [_rule_from_dict(r) for r in d["patterns"]]
+        pats = d["patterns"]
+        if not isinstance(pats, list) or not all(isinstance(r, dict) for r in pats):
+            raise PolicyError("snapshot: bad patterns")
+        layer.patterns = [_rule_from_dict(r) for r in pats]
     if "actions" in d:
-        layer.rule_actions = {
-            (k, Trust(t)): Action.parse(a) for k, t, a in d["actions"]
-        }
-    layer.overrides_enabled = d.get("overrides_enabled")
+        acts = d["actions"]
+        if not isinstance(acts, list) or not all(
+            isinstance(r, list) and len(r) == 3 and all(isinstance(x, str) for x in r)
+            for r in acts
+        ):
+            raise PolicyError("snapshot: bad actions")
+        layer.rule_actions = {(k, Trust(t)): Action.parse(a) for k, t, a in acts}
+    layer.overrides_enabled = _opt(d, "overrides_enabled", bool)
     if "override_disabled_rules" in d:
-        layer.override_disabled_rules = frozenset(d["override_disabled_rules"])
+        layer.override_disabled_rules = frozenset(_strs(d["override_disabled_rules"]))
     if "audit" in d:
         a = d["audit"]
+        if not (
+            isinstance(a, dict)
+            and isinstance(a["path"], str)
+            and isinstance(a["sink"], str | None)
+            and a["on_sink_failure"] in ("buffer", "block")
+        ):
+            raise PolicyError("snapshot: bad audit")
         layer.audit = AuditConfig(a["path"], a["sink"], a["on_sink_failure"])
     return layer
 
@@ -195,7 +246,12 @@ def save_snapshot(path: Path, layer: PolicyLayer | None) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _to_dict(layer or PolicyLayer(source="user"))
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    os.chmod(path, 0o600)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".snapshot-", suffix=".tmp")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
