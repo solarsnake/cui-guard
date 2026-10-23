@@ -1,0 +1,42 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 1024,
+  "system": [
+    {"type": "text", "text": "You are helping with db.example.mil ops.", "cache_control": {"type": "ephemeral"}}
+  ],
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a file from the host.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "Path on db.example.mil"}},
+        "required": ["path"]
+      }
+    },
+    {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+  ],
+  "messages": [
+    {"role": "user", "content": "Check host db.example.mil please"},
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "thinking", "thinking": "Plan: read the log.", "signature": "c2lnLXN5bnRoZXRpYw=="},
+        {"type": "redacted_thinking", "data": "cmVkYWN0ZWQ="},
+        {"type": "text", "text": "Reading the log."},
+        {"type": "tool_use", "id": "toolu_01", "name": "read_file", "input": {"path": "/var/log/db.example.mil.log", "opts": {"tags": ["alpha", "beta"], "n": 3}}},
+        {"type": "server_tool_use", "id": "srvtoolu_01", "name": "web_search", "input": {"query": "example mil"}},
+        {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_01", "content": [{"type": "web_search_result", "url": "https://example.mil/x", "title": "t", "encrypted_content": "ZW5j"}]}
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_01", "content": [{"type": "text", "text": "line one"}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}]},
+        {"type": "tool_result", "tool_use_id": "toolu_02", "content": "plain string result"},
+        {"type": "document", "source": {"type": "url", "url": "https://docs.example.mil/a.pdf"}},
+        {"type": "text", "text": "Summarize.", "cache_control": {"type": "ephemeral"}}
+      ]
+    }
+  ]
+}
