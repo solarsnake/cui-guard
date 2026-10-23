@@ -41,7 +41,9 @@ def _host_pattern(domains: tuple[str, ...]) -> re.Pattern[str] | None:
 
 
 def _words(terms: tuple[str, ...], flags: int) -> re.Pattern[str] | None:
-    parts = [re.escape(t) for t in terms if t]
+    parts = [
+        r"\s+".join(re.escape(tok) for tok in t.split()) for t in terms if t.strip()
+    ]
     if not parts:
         return None
     return re.compile(rf"(?<!\w)(?:{'|'.join(parts)})(?!\w)", flags)
@@ -70,22 +72,25 @@ def identifier_hits(text: str, cfg: IdentifierConfig) -> list[Hit]:
         for m in host_pat.finditer(norm):
             add("host", m)
 
-    networks = [
-        ipaddress.ip_network(r, strict=False) for r in BUILTIN_IP_RANGES + cfg.ip_ranges
-    ]
-    for m in _IPV4.finditer(norm):
+    networks = []
+    for r in BUILTIN_IP_RANGES + cfg.ip_ranges:
         try:
-            addr = ipaddress.IPv4Address(m.group())
-        except ValueError:
+            networks.append(ipaddress.ip_network(r, strict=False))
+        except ValueError as e:
+            raise ValueError(f"invalid ip_ranges entry {r!r}: {e}") from e
+    for m in _IPV4.finditer(norm):
+        # Parse octets as ints so leading zeros (010.001.002.003) cannot evade.
+        octets = [int(o) for o in m.group().split(".")]
+        if any(o > 255 for o in octets):
             continue
+        addr = ipaddress.IPv4Address(bytes(octets))
         if any(addr in n for n in networks if n.version == 4):
             add("ip", m)
 
     for m in _EMAIL.finditer(norm):
         add("email", m)
 
-    cfg_host_pat = _host_pattern(cfg.domains)
-    any_key = bool(cfg_host_pat and cfg_host_pat.search(norm))
+    any_key = bool(host_pat and host_pat.search(norm))
     projects = set(cfg.jira_projects)
     for m in _JIRA.finditer(norm):
         if m.group(1) in projects or any_key:

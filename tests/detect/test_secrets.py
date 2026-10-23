@@ -71,3 +71,21 @@ def test_rule_without_value_group_keeps_whole_match():
     rule = Rule("r", DetClass.SECRET, re.compile(r"ab(c)"), "secret", True, "t")
     (h,) = scan_rules("xabc", [rule])
     assert h.value == "abc"
+
+
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ('{"password": "' + "abc" + '12345"}', "abc12345"),
+        ("API_TOKEN=" + "xyz" + "789", "xyz789"),
+        ("export GITHUB_TOKEN=" + "qq" + "rr99", "qq" + "rr99"),
+        ("token: Bearer " + "abc" + "def", "abc" + "def"),
+        ("token: Basic " + "dXNl" + "cjpw", "dXNl" + "cjpw"),
+    ],
+)
+def test_assignment_shapes(text, value):
+    assert [h.value for h in hits_for("secret.assignment", text)] == [value]
+
+
+def test_assignment_ignores_lookalike_names():
+    assert hits_for("secret.assignment", "mytokenizer=fast") == []
