@@ -140,11 +140,15 @@ def _parse_endpoint(name: str, raw: Any) -> Endpoint:
         raise PolicyError(f"{where}.url: expected an http(s) URL")
     formats = _str_list(f"{where}.formats", t.get("formats"))
     if not formats or not set(formats) <= FORMATS:
-        raise PolicyError(f"{where}.formats: must be a non-empty subset of {sorted(FORMATS)}")
+        raise PolicyError(
+            f"{where}.formats: must be a non-empty subset of {sorted(FORMATS)}"
+        )
     cred = _str(f"{where}.credential", t.get("credential", "none"))
     if not _credential_ok(cred):
         raise PolicyError(f"{where}.credential: invalid credential {cred!r}")
-    return Endpoint(name, url, formats, _trust(f"{where}.trust", t.get("trust", "public")), cred)
+    return Endpoint(
+        name, url, formats, _trust(f"{where}.trust", t.get("trust", "public")), cred
+    )
 
 
 def _parse_action_table(where: str, raw: Any) -> dict[tuple[str, Trust], Action]:
@@ -164,7 +168,9 @@ def _parse_profiles(raw: Any) -> dict[str, dict[tuple[str, Trust], Action]]:
         for cls in DetClass:
             for trust in Trust:
                 if (cls.value, trust) not in actions:
-                    raise PolicyError(f"profiles.{name}: missing {cls.value}.{trust.value}")
+                    raise PolicyError(
+                        f"profiles.{name}: missing {cls.value}.{trust.value}"
+                    )
         unknown = {k for k, _ in actions} - {c.value for c in DetClass}
         if unknown:
             raise PolicyError(f"profiles.{name}: unknown class(es) {sorted(unknown)}")
@@ -196,7 +202,8 @@ def parse_layer(data: dict, source: str) -> PolicyLayer:
         layer.default_lane = _str("default_lane", data["default_lane"])
     if "endpoints" in data:
         layer.endpoints = {
-            name: _parse_endpoint(name, raw) for name, raw in _table("endpoints", data["endpoints"]).items()
+            name: _parse_endpoint(name, raw)
+            for name, raw in _table("endpoints", data["endpoints"]).items()
         }
     if "identifiers" in data:
         t = _table("identifiers", data["identifiers"])
@@ -206,7 +213,9 @@ def parse_layer(data: dict, source: str) -> PolicyLayer:
         )
     if "patterns" in data:
         entries = data["patterns"]
-        if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        if not isinstance(entries, list) or not all(
+            isinstance(e, dict) for e in entries
+        ):
             raise PolicyError("patterns: expected an array of tables")
         try:
             layer.patterns = rules_from_patterns(entries, source)
@@ -226,6 +235,9 @@ def parse_layer(data: dict, source: str) -> PolicyLayer:
         on_fail = t.get("on_sink_failure", "buffer")
         if on_fail not in ("buffer", "block"):
             raise PolicyError(f"audit.on_sink_failure: unknown value {on_fail!r}")
+        org_only = sorted(set(t) & {"sink", "on_sink_failure"})
+        if source == "user" and org_only:
+            raise PolicyError(f"audit: organization-only key(s) {org_only}")
         sink = _str("audit.sink", t["sink"]) if "sink" in t else None
         path = _str("audit.path", t.get("path", DEFAULT_AUDIT_PATH))
         layer.audit = AuditConfig(path=path, sink=sink, on_sink_failure=on_fail)
@@ -280,7 +292,7 @@ def _rule_from_dict(d: dict) -> Rule:
 class EffectivePolicy:
     profile: str
     endpoints: dict[str, Endpoint]
-    default_lane: str
+    default_lane: str | None
     identifiers: IdentifierConfig
     extra_rules: list[Rule]
     overrides_enabled: bool
@@ -288,6 +300,7 @@ class EffectivePolicy:
     audit: AuditConfig
     messages_file: str | None
     poc: str | None
+    min_version: str | None
     provenance: dict[str, str]
     actions: dict[tuple[str, Trust], Action] = field(default_factory=dict)
 
@@ -336,8 +349,11 @@ class EffectivePolicy:
             },
             "messages_file": self.messages_file,
             "poc": self.poc,
+            "min_version": self.min_version,
             "provenance": dict(self.provenance),
-            "actions": [[k, t.value, _action_name(a)] for (k, t), a in self.actions.items()],
+            "actions": [
+                [k, t.value, _action_name(a)] for (k, t), a in self.actions.items()
+            ],
         }
 
     @classmethod
@@ -348,18 +364,25 @@ class EffectivePolicy:
                 profile=d["profile"],
                 endpoints={
                     n: Endpoint(
-                        n, e["url"], tuple(e["formats"]), Trust(e["trust"]), e["credential"]
+                        n,
+                        e["url"],
+                        tuple(e["formats"]),
+                        Trust(e["trust"]),
+                        e["credential"],
                     )
                     for n, e in d["endpoints"].items()
                 },
                 default_lane=d["default_lane"],
-                identifiers=IdentifierConfig(**{k: tuple(v) for k, v in d["identifiers"].items()}),
+                identifiers=IdentifierConfig(
+                    **{k: tuple(v) for k, v in d["identifiers"].items()}
+                ),
                 extra_rules=[_rule_from_dict(r) for r in d["extra_rules"]],
                 overrides_enabled=d["overrides_enabled"],
                 override_disabled_rules=frozenset(d["override_disabled_rules"]),
                 audit=AuditConfig(a["path"], a["sink"], a["on_sink_failure"]),
                 messages_file=d["messages_file"],
                 poc=d["poc"],
+                min_version=d["min_version"],
                 provenance=dict(d["provenance"]),
                 actions={(k, Trust(t)): Action.parse(a_) for k, t, a_ in d["actions"]},
             )

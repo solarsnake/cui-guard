@@ -44,7 +44,11 @@ def _read_layer(path: Path, source: str) -> PolicyLayer:
 
 
 def load_builtin_layer() -> PolicyLayer:
-    text = resources.files("cui_guard.policy").joinpath("builtin.toml").read_text(encoding="utf-8")
+    text = (
+        resources.files("cui_guard.policy")
+        .joinpath("builtin.toml")
+        .read_text(encoding="utf-8")
+    )
     try:
         return parse_layer(tomllib.loads(text), "builtin")
     except tomllib.TOMLDecodeError as e:
@@ -57,6 +61,9 @@ def load_effective_policy(
     """Load and merge all layers. Any unreadable or invalid file that exists raises."""
     user_path = user_path if user_path is not None else user_config_path()
     org_path = org_path if org_path is not None else org_policy_path()
-    user = _read_layer(user_path, "user") if user_path.exists() else None
-    org = _read_layer(org_path, "org") if org_path.exists() else None
+    # lexists: a dangling symlink or unreadable file is not "absent"; fail closed.
+    org = _read_layer(org_path, "org") if os.path.lexists(org_path) else None
+    user = None
+    if org is None or org.user_config != "ignore":
+        user = _read_layer(user_path, "user") if user_path.exists() else None
     return merge_layers(load_builtin_layer(), user, org), user

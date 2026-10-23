@@ -36,7 +36,9 @@ def merged(user=None, org=None):
 def test_baseline_matches_spec_table():
     pol = merged()
     for cls, row in TABLE.items():
-        for trust, expected in zip((Trust.PUBLIC, Trust.APPROVED, Trust.LOCAL), row, strict=True):
+        for trust, expected in zip(
+            (Trust.PUBLIC, Trust.APPROVED, Trust.LOCAL), row, strict=True
+        ):
             assert pol.action_for_class(cls, trust) is expected, (cls, trust)
     assert pol.audit.path.endswith("cui-guard/audit.jsonl")
     assert "{state_dir}" not in pol.audit.path
@@ -60,13 +62,30 @@ def test_classified_invariant():
 
 
 def test_rule_id_cannot_weaken_classified():
-    pol = merged(user={"actions": {"cls.x": {"public": "allow"}}})
-    hit = Hit("cls.x", DetClass.CLASSIFIED_MARKING, 0, 1, "v")
+    pol = merged(user={"actions": {"classified-banner": {"public": "allow"}}})
+    hit = Hit("classified-banner", DetClass.CLASSIFIED_MARKING, 0, 1, "v")
     assert pol.action_for(hit, Trust.PUBLIC) is H
     # A rule-ID entry may tighten but never loosen a normal class.
-    pol = merged(user={"actions": {"r.loose": {"public": "allow"}, "r.tight": {"public": "block"}}})
-    assert pol.action_for(Hit("r.loose", DetClass.SECRET, 0, 1, "v"), Trust.PUBLIC) is P
-    assert pol.action_for(Hit("r.tight", DetClass.SECRET, 0, 1, "v"), Trust.PUBLIC) is B
+    pol = merged(
+        user={
+            "actions": {
+                "secret.assignment": {"public": "allow"},
+                "secret.openai-key": {"public": "block"},
+            }
+        }
+    )
+    assert (
+        pol.action_for(
+            Hit("secret.assignment", DetClass.SECRET, 0, 1, "v"), Trust.PUBLIC
+        )
+        is P
+    )
+    assert (
+        pol.action_for(
+            Hit("secret.openai-key", DetClass.SECRET, 0, 1, "v"), Trust.PUBLIC
+        )
+        is B
+    )
 
 
 def test_general_profile():
@@ -83,8 +102,16 @@ def test_lock_profile():
 
 
 def test_lock_endpoints():
-    corp = {"url": "https://llm.corp.invalid", "formats": ["openai-chat"], "trust": "approved"}
-    mine = {"url": "https://mine.invalid", "formats": ["openai-chat"], "trust": "approved"}
+    corp = {
+        "url": "https://llm.corp.invalid",
+        "formats": ["openai-chat"],
+        "trust": "approved",
+    }
+    mine = {
+        "url": "https://mine.invalid",
+        "formats": ["openai-chat"],
+        "trust": "approved",
+    }
     pol = merged(
         user={"endpoints": {"mine": mine}},
         org={"lock_endpoints": True, "endpoints": {"corp": corp}},
@@ -97,8 +124,15 @@ def test_fake_local_downgraded():
     pol = merged(user={"endpoints": {"fake": ep}})
     assert pol.endpoints["fake"].trust is Trust.PUBLIC
     assert pol.endpoints["ollama"].trust is Trust.LOCAL
-    ok = {"url": "http://10.0.0.5:11434", "formats": ["openai-chat"], "trust": "approved"}
-    assert merged(user={"endpoints": {"fake": ok}}).endpoints["fake"].trust is Trust.APPROVED
+    ok = {
+        "url": "http://10.0.0.5:11434",
+        "formats": ["openai-chat"],
+        "trust": "approved",
+    }
+    assert (
+        merged(user={"endpoints": {"fake": ok}}).endpoints["fake"].trust
+        is Trust.APPROVED
+    )
 
 
 def test_user_ignored():
@@ -147,13 +181,17 @@ def test_effective_policy_round_trip():
         user={
             "patterns": [pat],
             "identifiers": {"codenames": ["BLUEJAY"], "jira_projects": ["ABC"]},
-            "actions": {"r.x": {"public": "block"}},
+            "actions": {"secret.assignment": {"public": "block"}},
         },
         org={
             "poc": "sec@example.invalid",
             "messages_file": "/etc/x.txt",
-            "override_disabled_rules": ["r.x"],
-            "audit": {"path": "/var/a.jsonl", "sink": "https://sink.invalid", "on_sink_failure": "block"},
+            "override_disabled_rules": ["secret.assignment"],
+            "audit": {
+                "path": "/var/a.jsonl",
+                "sink": "https://sink.invalid",
+                "on_sink_failure": "block",
+            },
         },
     )
     again = EffectivePolicy.from_dict(json.loads(json.dumps(pol.to_dict())))
@@ -169,3 +207,99 @@ def test_effective_policy_round_trip():
         "u.pat", DetClass.SECRET, "tok", True, "user",
     )  # fmt: skip
     assert rule.pattern.search("zzzz")
+
+
+def _ep(url, trust="public", **kw):
+    return {"url": url, "formats": ["anthropic"], "trust": trust, **kw}
+
+
+def test_min_version_exposed_and_round_trips():
+    pol = merged(org={"min_version": "1.2.3"})
+    assert pol.min_version == "1.2.3"
+    again = EffectivePolicy.from_dict(json.loads(json.dumps(pol.to_dict())))
+    assert again.min_version == "1.2.3"
+    assert merged().min_version is None
+
+
+def test_audit_sink_org_only():
+    for key, val in (("sink", "https://s.invalid"), ("on_sink_failure", "block")):
+        with pytest.raises(PolicyError):
+            parse_layer({"audit": {key: val}}, "user")
+    assert (
+        parse_layer({"audit": {"path": "/x/a.jsonl"}}, "user").audit.path
+        == "/x/a.jsonl"
+    )
+
+
+def test_dangling_builtin_default_lane_is_none():
+    corp = _ep("https://llm.corp.invalid", "approved")
+    pol = merged(org={"lock_endpoints": True, "endpoints": {"corp": corp}})
+    assert pol.default_lane is None
+    again = EffectivePolicy.from_dict(json.loads(json.dumps(pol.to_dict())))
+    assert again.default_lane is None
+
+
+def test_explicit_dangling_default_lane_rejected():
+    with pytest.raises(PolicyError):
+        merged(user={"default_lane": "nope"})
+    corp = _ep("https://llm.corp.invalid", "approved")
+    with pytest.raises(PolicyError):
+        merged(
+            org={
+                "lock_endpoints": True,
+                "endpoints": {"corp": corp},
+                "default_lane": "x",
+            }
+        )
+    ok = merged(
+        org={
+            "lock_endpoints": True,
+            "endpoints": {"corp": corp},
+            "default_lane": "corp",
+        }
+    )
+    assert ok.default_lane == "corp"
+
+
+def test_dangling_org_symlink_refuses(tmp_path):
+    link = tmp_path / "policy.toml"
+    link.symlink_to(tmp_path / "missing.toml")
+    with pytest.raises(PolicyError):
+        load_effective_policy(user_path=tmp_path / "none.toml", org_path=link)
+
+
+def test_org_ignore_skips_user_file(tmp_path):
+    user = tmp_path / "config.toml"
+    user.write_text("garbage = = =", encoding="utf-8")
+    org = tmp_path / "policy.toml"
+    org.write_text('user_config = "ignore"\n', encoding="utf-8")
+    pol, user_layer = load_effective_policy(user_path=user, org_path=org)
+    assert user_layer is None
+    assert pol.profile == "cui"
+
+
+def test_user_cannot_redirect_endpoint():
+    with pytest.raises(PolicyError):
+        merged(user={"endpoints": {"anthropic": _ep("https://evil.invalid")}})
+    with pytest.raises(PolicyError):
+        merged(
+            user={
+                "endpoints": {
+                    "anthropic": _ep(
+                        "https://api.anthropic.com", credential="env:OTHER"
+                    )
+                }
+            }
+        )
+    same = _ep(
+        "https://api.anthropic.com", credential="env-or-passthrough:ANTHROPIC_API_KEY"
+    )
+    assert "anthropic" in merged(user={"endpoints": {"anthropic": same}}).endpoints
+
+
+def test_unknown_action_key_rejected():
+    with pytest.raises(PolicyError, match="cui-markng"):
+        merged(user={"actions": {"cui-markng": {"public": "block"}}})
+    pat = {"id": "u.pat", "class": "secret", "regex": "zzz+"}
+    pol = merged(user={"patterns": [pat], "actions": {"u.pat": {"public": "block"}}})
+    assert pol.actions[("u.pat", Trust.PUBLIC)] is B

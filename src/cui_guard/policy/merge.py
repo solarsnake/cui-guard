@@ -5,8 +5,8 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from cui_guard.detect.identifiers import IdentifierConfig
-from cui_guard.detect.rules import Rule
-from cui_guard.model import Action, Trust
+from cui_guard.detect.rules import Rule, load_builtin_rules
+from cui_guard.model import Action, DetClass, Trust
 from cui_guard.policy.schema import (
     ALWAYS_HARD,
     DEFAULT_AUDIT_PATH,
@@ -33,13 +33,30 @@ def _downgrade(ep: Endpoint) -> Endpoint:
     return ep
 
 
-def _merge_endpoints(layers: list[PolicyLayer], org: PolicyLayer | None) -> tuple[dict, dict]:
+def _merge_endpoints(
+    layers: list[PolicyLayer], org: PolicyLayer | None
+) -> tuple[dict, dict]:
     if org is not None and org.lock_endpoints:
         layers = [org]
     out: dict[str, Endpoint] = {}
     prov: dict[str, str] = {}
+    fixed = {
+        n: e
+        for src in (layers[0], org)
+        if src is not None
+        for n, e in (src.endpoints or {}).items()
+    }
     for layer in layers:
         for name, raw in (layer.endpoints or {}).items():
+            old_fixed = fixed.get(name)
+            if (
+                layer.source == "user"
+                and old_fixed is not None
+                and (raw.url, raw.credential) != (old_fixed.url, old_fixed.credential)
+            ):
+                raise PolicyError(
+                    f"endpoints.{name}: user layer may not change url or credential"
+                )
             ep = _downgrade(raw)
             old = out.get(name)
             if old is not None and _STRICTNESS[ep.trust] < _STRICTNESS[old.trust]:
@@ -49,6 +66,16 @@ def _merge_endpoints(layers: list[PolicyLayer], org: PolicyLayer | None) -> tupl
             out[name] = ep
             prov[f"endpoints.{name}"] = layer.source
     return out, prov
+
+
+def _check_action_keys(layers: list[PolicyLayer]) -> None:
+    known = {c.value for c in DetClass} | {r.id for r in load_builtin_rules()}
+    for layer in layers:
+        known |= {r.id for r in layer.patterns or []}
+    for layer in layers:
+        for key, _ in layer.rule_actions or {}:
+            if key not in known:
+                raise PolicyError(f"actions: unknown class or rule id {key!r}")
 
 
 def merge_layers(
@@ -85,13 +112,16 @@ def merge_layers(
             actions[(cls.value, trust)] = Action.BLOCK_HARD
             prov[f"actions.{cls.value}.{trust.value}"] = "invariant"
 
+    _check_action_keys(layers)
     endpoints, ep_prov = _merge_endpoints(layers, org)
     prov.update(ep_prov)
 
     # Unions.
     fields = ("domains", "ip_ranges", "codenames", "jira_projects", "people")
     ids = [layer.identifiers for layer in layers if layer.identifiers is not None]
-    identifiers = IdentifierConfig(**{f: _union(*(getattr(i, f) for i in ids)) for f in fields})
+    identifiers = IdentifierConfig(
+        **{f: _union(*(getattr(i, f) for i in ids)) for f in fields}
+    )
     for layer in layers:
         if layer.identifiers is not None:
             for f in fields:
@@ -108,7 +138,9 @@ def merge_layers(
     for layer in layers:
         if layer.overrides_enabled is False:
             overrides_enabled, prov["overrides_enabled"] = False, layer.source
-    disabled = frozenset().union(*(x.override_disabled_rules or frozenset() for x in layers))
+    disabled = frozenset().union(
+        *(x.override_disabled_rules or frozenset() for x in layers)
+    )
 
     # Highest layer that sets a scalar wins.
     default_lane = messages_file = poc = None
@@ -122,8 +154,15 @@ def merge_layers(
             messages_file, prov["messages_file"] = layer.messages_file, layer.source
         if layer.poc is not None:
             poc, prov["poc"] = layer.poc, layer.source
-    if default_lane is None:
-        raise PolicyError("no default_lane set")
+    if default_lane is not None and default_lane not in endpoints:
+        if prov["default_lane"] == "builtin":
+            default_lane = None
+            del prov["default_lane"]
+        else:
+            raise PolicyError(
+                f"default_lane {default_lane!r} (set by {prov['default_lane']}) "
+                "is not among the merged endpoints"
+            )
     audit = AuditConfig(
         path=audit.path.replace("{state_dir}", str(state_dir())),
         sink=audit.sink,
@@ -141,6 +180,7 @@ def merge_layers(
         audit=audit,
         messages_file=messages_file,
         poc=poc,
+        min_version=org.min_version if org is not None else None,
         provenance=prov,
         actions=actions,
     )

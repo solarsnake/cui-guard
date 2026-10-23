@@ -32,7 +32,9 @@ def test_bad_enums_rejected():
 
 def test_bad_pattern_wrapped():
     with pytest.raises(PolicyError, match=r"patterns\[0\]"):
-        parse_layer({"patterns": [{"id": "p", "class": "secret", "regex": "("}]}, "user")
+        parse_layer(
+            {"patterns": [{"id": "p", "class": "secret", "regex": "("}]}, "user"
+        )
 
 
 def test_builtin_parses():
@@ -40,7 +42,11 @@ def test_builtin_parses():
     assert layer.profile == "cui"
     assert set(layer.endpoints) == {"anthropic", "openai", "ollama"}
     assert layer.endpoints["ollama"].trust is Trust.LOCAL
-    assert layer.endpoints["ollama"].formats == ("anthropic", "openai-responses", "openai-chat")
+    assert layer.endpoints["ollama"].formats == (
+        "anthropic",
+        "openai-responses",
+        "openai-chat",
+    )
     assert set(layer.profiles) == {"cui", "general"}
     assert layer.profiles["cui"][("cui-marking", Trust.PUBLIC)] is Action.BLOCK
 
