@@ -189,3 +189,36 @@ def test_run_claude_refuses_bad_user_settings(tmp_path, monkeypatch):
     with pytest.raises(LaunchError, match="CLAUDE_CODE_USE_VERTEX"):
         cl.run_claude([], None, True)
     assert ran == [["claude", "--version"]]
+
+
+def test_project_settings_in_parent_dirs_refused(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    root = tmp_path / "proj"
+    deep = root / "a" / "b"
+    deep.mkdir(parents=True)
+    monkeypatch.chdir(deep)
+    cl.check_user_claude_settings(True)
+    (root / ".claude").mkdir()
+    local = root / ".claude" / "settings.local.json"
+    local.write_text(json.dumps({"env": {"AWS_PROFILE": "x"}}))
+    with pytest.raises(LaunchError) as e:
+        cl.check_user_claude_settings(False)
+    assert str(local) in str(e.value) and "AWS_PROFILE" in str(e.value)
+    local.write_text(json.dumps({"env": {"OK": "1"}}))
+    (root / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"CLAUDE_CODE_USE_VERTEX": "1"}})
+    )
+    with pytest.raises(LaunchError, match="CLAUDE_CODE_USE_VERTEX"):
+        cl.check_user_claude_settings(False)
+    (root / ".claude" / "settings.json").write_text("{not json")
+    with pytest.raises(LaunchError, match="cannot read"):
+        cl.check_user_claude_settings(False)
+
+
+def test_claude_env_strips_lane_credential_var():
+    s = fake_session("gateway")
+    s.lane = Endpoint("c", "https://x.example.invalid", ("anthropic",), Trust.PUBLIC, "env:MY_UP_KEY")
+    env = build_claude_env({"MY_UP_KEY": "secret-shaped", "KEEP": "1"}, s)
+    assert "MY_UP_KEY" not in env and env["KEEP"] == "1"

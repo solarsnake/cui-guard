@@ -60,24 +60,40 @@ def _is_alt_route(name: str, gateway_mode: bool) -> bool:
     )
 
 
+def _settings_files() -> list[Path]:
+    """User settings, then project settings in the working directory and every parent."""
+    files = [Path.home() / ".claude" / "settings.json"]
+    cwd = Path.cwd()
+    for d in (cwd, *cwd.parents):
+        files += [d / ".claude" / "settings.json", d / ".claude" / "settings.local.json"]
+    seen: set[Path] = set()
+    out = []
+    for f in files:
+        key = f.absolute()
+        if key not in seen:
+            seen.add(key)
+            out.append(f)
+    return out
+
+
 def check_user_claude_settings(gateway_mode: bool) -> None:
-    """Refuse if ~/.claude/settings.json sets variables that route around the gateway."""
-    path = Path.home() / ".claude" / "settings.json"
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise LaunchError(f"cannot read {path}: {e}") from e
-    env = data.get("env") if isinstance(data, dict) else None
-    if not isinstance(env, dict):
-        return
-    bad = sorted(k for k in env if _is_alt_route(k, gateway_mode))
-    if bad:
-        raise LaunchError(
-            f"{path} sets {', '.join(bad)}, which can send traffic around the gateway; "
-            "remove them before using cui-guard"
-        )
+    """Refuse if any Claude settings file in effect sets variables that bypass the gateway."""
+    for path in _settings_files():
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            raise LaunchError(f"cannot read {path}: {e}") from e
+        env = data.get("env") if isinstance(data, dict) else None
+        if not isinstance(env, dict):
+            continue
+        bad = sorted(k for k in env if _is_alt_route(k, gateway_mode))
+        if bad:
+            raise LaunchError(
+                f"{path} sets {', '.join(bad)}, which can send traffic around the gateway; "
+                "remove them before using cui-guard"
+            )
 
 
 def check_claude_version(output: str) -> None:
