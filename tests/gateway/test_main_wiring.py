@@ -46,3 +46,11 @@ async def test_headless_config_selects_headless_channel(tmp_path, monkeypatch):
     with pytest.raises(Stop):
         await gm._serve(cfg)
     assert isinstance(seen["channel"], HeadlessChannel)
+
+
+def test_watch_stdin_exits_on_eof():
+    import io
+
+    codes = []
+    gm._watch_stdin(io.StringIO(""), codes.append)
+    assert codes == [0]

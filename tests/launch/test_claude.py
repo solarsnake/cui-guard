@@ -115,3 +115,77 @@ def test_run_claude_uses_settings_file_and_cleans_up(monkeypatch):
     import os
 
     assert not os.path.exists(cmd[2])
+
+
+def _patch_start(monkeypatch, mod, mode="passthrough"):
+    real_start = mod.start_gateway
+    monkeypatch.setattr(
+        mod,
+        "start_gateway",
+        lambda agent, lane, headless, env: real_start(
+            agent, lane, headless, {"PATH": ""}, channel=FakeChannel("j", True)
+        ),
+    )
+
+
+def test_claude_env_strips_alternate_routes_and_sets_no_proxy():
+    base = {
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+        "CLAUDE_CODE_USE_VERTEX": "1",
+        "ANTHROPIC_BEDROCK_BASE_URL": "x",
+        "ANTHROPIC_VERTEX_BASE_URL": "x",
+        "ANTHROPIC_FOUNDRY_BASE_URL": "x",
+        "ANTHROPIC_AWS_BASE_URL": "x",
+        "ANTHROPIC_FOUNDRY_API_KEY": "x",
+        "ANTHROPIC_FOUNDRY_AUTH_TOKEN": "x",
+        "AWS_PROFILE": "x",
+        "GOOGLE_APPLICATION_CREDENTIALS": "x",
+        "ANTHROPIC_VERTEX_PROJECT_ID": "x",
+        "CLOUD_ML_REGION": "x",
+        "CLAUDE_CODE_OAUTH_TOKEN": "x",
+        "NO_PROXY": "corp.example.invalid",
+        "KEEP": "1",
+    }
+    gw = build_claude_env(base, fake_session("gateway"))
+    assert gw == {
+        k: gw[k] for k in gw if k in ("KEEP", "NO_PROXY", "no_proxy") or k.startswith(("ANTHROPIC_", "CLAUDE_CODE_DISABLE", "DISABLE_", "ENABLE_"))
+    } and "CLAUDE_CODE_OAUTH_TOKEN" not in gw
+    for k in base:
+        if k not in ("KEEP", "NO_PROXY"):
+            assert k not in gw or k.startswith("ANTHROPIC_CUSTOM")
+    assert gw["NO_PROXY"] == "corp.example.invalid,127.0.0.1,localhost,::1"
+    assert gw["no_proxy"] == "127.0.0.1,localhost,::1"
+    pt = build_claude_env(base, fake_session("passthrough"))
+    assert pt["CLAUDE_CODE_OAUTH_TOKEN"] == "x" and "CLAUDE_CODE_USE_BEDROCK" not in pt
+
+
+def test_user_settings_env_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cl.check_user_claude_settings(True)  # no file
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "x", "OK": "1"}})
+    )
+    with pytest.raises(LaunchError, match="AWS_REGION.*CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_BEDROCK"):
+        cl.check_user_claude_settings(False)
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"env": {"OK": "1"}}))
+    cl.check_user_claude_settings(False)
+
+
+def test_run_claude_refuses_bad_user_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"CLAUDE_CODE_USE_VERTEX": "1"}})
+    )
+    _patch_start(monkeypatch, cl)
+    ran = []
+
+    def fake_run(cmd, **kw):
+        ran.append(cmd)
+        return SimpleNamespace(stdout="2.1.309 (Claude Code)\n", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(LaunchError, match="CLAUDE_CODE_USE_VERTEX"):
+        cl.run_claude([], None, True)
+    assert ran == [["claude", "--version"]]

@@ -8,7 +8,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cui_guard.launch.session import GatewaySession, LaunchError, banner, start_gateway
+from cui_guard.launch.session import (
+    GatewaySession,
+    LaunchError,
+    add_no_proxy,
+    banner,
+    exit_on_signals,
+    lane_credential_var,
+    session_policy,
+    start_gateway,
+)
 
 
 def build_codex_args(s: GatewaySession) -> list[str]:
@@ -51,14 +60,18 @@ def run_codex(args: list[str], lane: str | None, headless: bool) -> int:
         raise LaunchError(
             f"a stored ChatGPT login was found in {home / 'auth.json'}. Codex may send "
             "traffic with that login directly to OpenAI, outside the gateway "
-            "(spec 13 trade-off). Sign out (codex logout) and use an API key instead."
+            "(spec 13 trade-off). Sign out (codex logout) and use an API key instead. "
+            "ChatGPT logins stored in the OS keyring cannot be detected; do not use "
+            "one with cui-guard."
         )
-    with start_gateway("codex", lane, headless, os.environ) as s:
-        assert s.policy is not None
-        print(banner(s, s.policy), file=sys.stderr)
+    with exit_on_signals(), start_gateway("codex", lane, headless, os.environ) as s:
+        print(banner(s, session_policy(s)), file=sys.stderr)
         env = dict(os.environ)
-        env.pop("OPENAI_API_KEY", None)
+        for k in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", lane_credential_var(s.lane)):
+            if k:
+                env.pop(k, None)
         env["CUI_GUARD_TOKEN"] = s.token
+        add_no_proxy(env)
         try:
             return subprocess.run(
                 ["codex", *build_codex_args(s), *args], env=env, check=False

@@ -14,7 +14,11 @@ from pathlib import Path
 from cui_guard.launch.session import (
     GatewaySession,
     LaunchError,
+    add_no_proxy,
     banner,
+    exit_on_signals,
+    lane_credential_var,
+    session_policy,
     start_gateway,
     version_lt,
     version_tuple,
@@ -35,6 +39,47 @@ _LOCKDOWN_ENV = {
 }
 
 
+_STRIP_EXACT = (
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_VERTEX_BASE_URL",
+    "ANTHROPIC_FOUNDRY_BASE_URL",
+    "ANTHROPIC_AWS_BASE_URL",
+    "ANTHROPIC_FOUNDRY_API_KEY",
+    "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLOUD_ML_REGION",
+)
+
+
+def _is_alt_route(name: str, gateway_mode: bool) -> bool:
+    return (
+        name.startswith(("CLAUDE_CODE_USE_", "AWS_"))
+        or name in _STRIP_EXACT
+        or (gateway_mode and name == "CLAUDE_CODE_OAUTH_TOKEN")
+    )
+
+
+def check_user_claude_settings(gateway_mode: bool) -> None:
+    """Refuse if ~/.claude/settings.json sets variables that route around the gateway."""
+    path = Path.home() / ".claude" / "settings.json"
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise LaunchError(f"cannot read {path}: {e}") from e
+    env = data.get("env") if isinstance(data, dict) else None
+    if not isinstance(env, dict):
+        return
+    bad = sorted(k for k in env if _is_alt_route(k, gateway_mode))
+    if bad:
+        raise LaunchError(
+            f"{path} sets {', '.join(bad)}, which can send traffic around the gateway; "
+            "remove them before using cui-guard"
+        )
+
+
 def check_claude_version(output: str) -> None:
     m = re.search(r"\d+(?:\.\d+)+", output)
     if not m:
@@ -51,13 +96,19 @@ def _base_url_env(s: GatewaySession) -> dict[str, str]:
 
 
 def build_claude_env(base: Mapping[str, str], s: GatewaySession) -> dict[str, str]:
-    env = dict(base)
+    env = {
+        k: v for k, v in base.items() if not _is_alt_route(k, s.credential_mode != "passthrough")
+    }
     env.pop("ANTHROPIC_API_KEY", None)
+    var = lane_credential_var(s.lane)
+    if var:
+        env.pop(var, None)
     env.pop("ANTHROPIC_AUTH_TOKEN", None)
     env.update(_base_url_env(s))
     env["ANTHROPIC_CUSTOM_HEADERS"] = f"X-CUI-Guard-Token: {s.token}"
     if s.credential_mode != "passthrough":
         env["ANTHROPIC_AUTH_TOKEN"] = s.token
+    add_no_proxy(env)
     return env
 
 
@@ -89,9 +140,9 @@ def run_claude(args: list[str], lane: str | None, headless: bool) -> int:
     except (OSError, subprocess.TimeoutExpired) as e:
         raise LaunchError(f"cannot run claude --version: {e}") from e
     check_claude_version(ver.stdout)
-    with start_gateway("claude", lane, headless, os.environ) as s:
-        assert s.policy is not None
-        print(banner(s, s.policy), file=sys.stderr)
+    with exit_on_signals(), start_gateway("claude", lane, headless, os.environ) as s:
+        check_user_claude_settings(s.credential_mode != "passthrough")
+        print(banner(s, session_policy(s)), file=sys.stderr)
         fd, name = tempfile.mkstemp(prefix="cui-guard-claude-", suffix=".json")
         path = Path(name)
         try:

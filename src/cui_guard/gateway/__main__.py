@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+import threading
 
 import uvicorn
 
@@ -31,8 +33,18 @@ async def _serve(cfg: GatewayConfig) -> None:
     await task
 
 
+def _watch_stdin(stream, exit_fn=os._exit) -> None:
+    """Block until the launcher's end of stdin closes, then exit: no orphan gateways."""
+    try:
+        stream.read()
+    except (OSError, ValueError):
+        pass
+    exit_fn(0)
+
+
 def main() -> None:
-    cfg = GatewayConfig.from_json(sys.stdin.read())
+    cfg = GatewayConfig.from_json(sys.stdin.readline())
+    threading.Thread(target=_watch_stdin, args=(sys.stdin,), daemon=True).start()
     asyncio.run(_serve(cfg))
 
 

@@ -135,3 +135,46 @@ def test_banner_mentions_passthrough_tradeoff():
     assert "anthropic" in text and "public" in text and "passthrough" in text
     assert "Trade-off" in text and "Consumer-plan" in text
     assert "compliant" not in text.lower()
+
+
+def test_gateway_exits_when_launcher_stdin_closes():
+    env = {"PATH": os.environ.get("PATH", "")}
+    s = start_gateway("claude", None, True, env, channel=FakeChannel("j", True))
+    try:
+        assert s.proc.poll() is None
+        s.proc.stdin.close()  # simulates the launcher dying
+        assert s.proc.wait(timeout=5) == 0
+    finally:
+        s.close()
+
+
+def test_signal_handlers_raise_systemexit_and_restore():
+    import signal
+
+    before = signal.getsignal(signal.SIGTERM)
+    with sess.exit_on_signals():
+        handler = signal.getsignal(signal.SIGTERM)
+        assert handler is not before
+        assert signal.getsignal(signal.SIGHUP) is handler
+        with pytest.raises(SystemExit) as e:
+            handler(signal.SIGTERM, None)
+        assert e.value.code == 128 + signal.SIGTERM
+        cleaned = []
+        with pytest.raises(SystemExit):
+            try:
+                os.kill(os.getpid(), signal.SIGHUP)
+                signal.pthread_kill(__import__("threading").get_ident(), 0)
+                import time
+
+                time.sleep(0.5)
+            finally:
+                cleaned.append(1)
+        assert cleaned
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_add_no_proxy_appends():
+    env = {"no_proxy": "a.example.invalid,localhost"}
+    sess.add_no_proxy(env)
+    assert env["no_proxy"] == "a.example.invalid,localhost,127.0.0.1,::1"
+    assert env["NO_PROXY"] == "127.0.0.1,localhost,::1"

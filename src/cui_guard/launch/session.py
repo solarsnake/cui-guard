@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import queue
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from cui_guard import __version__
 from cui_guard.gateway.app import GatewayConfig
@@ -34,8 +37,51 @@ AGENT_FORMATS = {"claude": "anthropic", "codex": "openai-responses"}
 AGENT_DEFAULT_LANES = {"claude": "anthropic", "codex": "openai"}
 
 
+CredMode = Literal["gateway", "passthrough", "none"]
+LOCAL_NO_PROXY = ("127.0.0.1", "localhost", "::1")
+
+
 class LaunchError(Exception):
     pass
+
+
+def session_policy(s: GatewaySession) -> EffectivePolicy:
+    if s.policy is None:
+        raise LaunchError("gateway session has no policy")
+    return s.policy
+
+
+def add_no_proxy(env: dict[str, str]) -> None:
+    """Keep loopback traffic off any configured proxy (appends to existing values)."""
+    for key in ("NO_PROXY", "no_proxy"):
+        have = [h for h in env.get(key, "").split(",") if h.strip()]
+        have += [h for h in LOCAL_NO_PROXY if h not in have]
+        env[key] = ",".join(have)
+
+
+def lane_credential_var(ep: Endpoint) -> str | None:
+    kind, _, arg = ep.credential.partition(":")
+    return arg if kind in ("env", "env-or-passthrough") and arg else None
+
+
+def _raise_exit(signum: int, _frame) -> None:
+    raise SystemExit(128 + signum)
+
+
+@contextmanager
+def exit_on_signals() -> Iterator[None]:
+    """Turn SIGTERM and SIGHUP into SystemExit so cleanup in `finally` runs."""
+    saved = {}
+    try:
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            saved[sig] = signal.signal(sig, _raise_exit)
+    except ValueError:  # not the main thread
+        pass
+    try:
+        yield
+    finally:
+        for sig, old in saved.items():
+            signal.signal(sig, old)
 
 
 def version_tuple(text: str) -> tuple[int, ...]:
@@ -50,7 +96,7 @@ def version_lt(a: tuple[int, ...], b: tuple[int, ...]) -> bool:
     return a + (0,) * (n - len(a)) < b + (0,) * (n - len(b))
 
 
-def resolve_credential(ep: Endpoint, env: Mapping[str, str]) -> tuple[str, str | None]:
+def resolve_credential(ep: Endpoint, env: Mapping[str, str]) -> tuple[CredMode, str | None]:
     """Return (mode, secret) for an endpoint's credential spec."""
     kind, _, arg = ep.credential.partition(":")
     if kind == "none":
@@ -136,7 +182,7 @@ class GatewaySession:
     token: str
     session_id: str
     lane: Endpoint
-    credential_mode: str
+    credential_mode: CredMode
     proc: subprocess.Popen
     policy: EffectivePolicy | None = None
     session_file: Path | None = None
@@ -151,6 +197,9 @@ class GatewaySession:
     def close(self) -> None:
         proc = self.proc
         try:
+            if proc.stdin is not None:
+                with contextlib.suppress(OSError):
+                    proc.stdin.close()
             if proc.poll() is None:
                 proc.terminate()
                 try:
@@ -223,7 +272,7 @@ def start_gateway(
     token = secrets.token_urlsafe(32)
     session_id = secrets.token_hex(8)
     try:
-        cfg = GatewayConfig(token, agent, lane, policy, mode, secret, headless, session_id)  # type: ignore[arg-type]
+        cfg = GatewayConfig(token, agent, lane, policy, mode, secret, headless, session_id)
     except ValueError as e:
         raise LaunchError(str(e)) from e
     proc = subprocess.Popen(
@@ -237,8 +286,9 @@ def start_gateway(
     try:
         assert proc.stdin is not None
         try:
-            proc.stdin.write(cfg.to_json())
-            proc.stdin.close()
+            # One line; stdin stays open so the gateway exits if this process dies.
+            proc.stdin.write(cfg.to_json() + "\n")
+            proc.stdin.flush()
         except OSError as e:
             raise LaunchError(f"gateway exited before reading its configuration: {e}") from e
         session.port = _read_ready(proc)

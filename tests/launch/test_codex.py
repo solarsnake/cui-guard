@@ -49,3 +49,42 @@ def test_codex_chatgpt_session_refused(tmp_path, monkeypatch):
     with pytest.raises(LaunchError, match="spec 13"):
         cx.run_codex([], None, True)
     assert not started
+
+
+def test_run_codex_env(tmp_path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    from cui_guard.override.human import FakeChannel
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    for k in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+        monkeypatch.setenv(k, "x")
+    real = cx.start_gateway
+    monkeypatch.setattr(
+        cx,
+        "start_gateway",
+        lambda agent, lane, headless, env: real(
+            agent, lane, headless, {"OPENAI_API_KEY": "up"}, channel=FakeChannel("j", True)
+        ),
+    )
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(cmd=cmd, env=kw["env"])
+        return SimpleNamespace(returncode=3)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert cx.run_codex(["exec"], None, True) == 3
+    env = seen["env"]
+    for k in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+        assert k not in env
+    assert env["CUI_GUARD_TOKEN"] and "127.0.0.1" in env["NO_PROXY"]
+    assert seen["cmd"][0] == "codex" and seen["cmd"][-1] == "exec"
+
+
+def test_chatgpt_refusal_mentions_keyring(tmp_path, monkeypatch):
+    (tmp_path / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt"}))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    with pytest.raises(LaunchError, match="keyring"):
+        cx.run_codex([], None, True)
