@@ -26,6 +26,7 @@ class _StrictSysLogHandler(logging.handlers.SysLogHandler):
         raise  # noqa: PLE0704 - re-raise the emit failure to the caller
 
 
+MAX_JUSTIFICATION_CHARS = 500
 _OVERRIDE_KEYS = ("id", "rule_id", "status", "content_hash", "justification")
 
 
@@ -43,6 +44,13 @@ def _syslog_address(spec: str) -> str | tuple[str, int]:
 def sha256_json(obj: object) -> str:
     text = json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _override_entry(o: dict) -> dict:
+    entry = {k: o[k] for k in _OVERRIDE_KEYS if k in o}
+    if isinstance(entry.get("justification"), str):
+        entry["justification"] = entry["justification"][:MAX_JUSTIFICATION_CHARS]
+    return entry
 
 
 class AuditLog:
@@ -147,9 +155,7 @@ class AuditLog:
             "hits": dict(decision.hit_counts),
             "action": action or ("blocked" if decision.blocked else "forwarded"),
             "blocked_rules": [b.rule_id for b in decision.blocked],
-            "override": [
-                {k: o[k] for k in _OVERRIDE_KEYS if k in o} for o in (overrides or [])
-            ],
+            "override": [_override_entry(o) for o in (overrides or [])],
             "leftover_count": leftover_count,
             "request_hash": request_hash,
             "guard_version": __version__,

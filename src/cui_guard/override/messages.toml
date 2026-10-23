@@ -4,8 +4,8 @@
 [warn]
 cui_public = """
 WARNING: POSSIBLE CUI BEING SENT TO A PUBLIC AI SERVICE.
-If this content is CUI, sending it is prohibited under ISOO Notice 2026-01 ¶7 (federal personnel) and DFARS 252.204-7012 (contractors).
-It may be a reportable cyber incident. Contractors must report within 72 hours.
+If this content is CUI, sending it is prohibited for federal personnel under ISOO Notice 2026-01 ¶7; for contractors, it likely violates DFARS 252.204-7012 safeguarding requirements, which require cloud services handling covered defense information to meet FedRAMP Moderate–equivalent security.
+It may be a reportable cyber incident. Under DFARS 252.204-7012, contractors must report cyber incidents within 72 hours of discovery.
 It can carry contractual, administrative and clearance consequences.
 By overriding, you assert that this content is not CUI.
 If you are unsure, do not override.
@@ -14,8 +14,8 @@ Point of contact: {poc}.
 
 controlled_public = """
 WARNING: CONTROLLED INFORMATION MAY BE SENT TO A PUBLIC AI SERVICE.
-This content resembles controlled information. If it is CUI, sending it is prohibited under ISOO Notice 2026-01 ¶7 (federal personnel) and DFARS 252.204-7012 (contractors).
-It may be a reportable cyber incident. Contractors must report within 72 hours.
+This content resembles controlled information. If it is CUI, sending it is prohibited for federal personnel under ISOO Notice 2026-01 ¶7; for contractors, it likely violates DFARS 252.204-7012 safeguarding requirements, which require cloud services handling covered defense information to meet FedRAMP Moderate–equivalent security.
+It may be a reportable cyber incident. Under DFARS 252.204-7012, contractors must report cyber incidents within 72 hours of discovery.
 It can carry contractual, administrative and clearance consequences.
 By overriding, you assert that this content is not CUI.
 If you are unsure, do not override.

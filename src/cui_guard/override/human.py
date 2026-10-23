@@ -232,7 +232,7 @@ class LinuxChannel(_Base):
                 "--text=" + html.escape(body), "--width=600",
             ]  # fmt: skip
         else:
-            cmd = ["kdialog", "--title", "cui-guard override", "--inputbox", body]
+            cmd = ["kdialog", "--title", "cui-guard override", "--inputbox", html.escape(body)]
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=DIALOG_TIMEOUT_S, check=False

@@ -25,6 +25,7 @@ def test_messages_contain_required_citations():
     assert set(m) >= set(human.MESSAGE_KEYS)
     cui = m["warn.cui_public"]
     assert "ISOO Notice 2026-01" in cui and "DFARS 252.204-7012" in cui and "72" in cui
+    assert "federal personnel under ISOO Notice 2026-01" in cui and "FedRAMP" in cui
     assert "not CUI" in cui and "consequences" in cui
     stop = m["stop.classified"]
     assert "spill" in stop and "security officer" in stop and "Nothing was forwarded" in stop
@@ -189,3 +190,13 @@ def test_classified_notice_uses_stop_text(monkeypatch, cls):
     b = BlockInfo("classified.banner", cls, Action.BLOCK_HARD, "m", "x", "h", None)
     MacChannel(poc="ISSO").notify_block(b, False)
     assert "security officer" in run.calls[0][0][-1] and "ISSO" in run.calls[0][0][-1]
+
+
+def test_kdialog_body_is_escaped(monkeypatch):
+    run = Runner((0, LONG))
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(human.shutil, "which", lambda n: "/usr/bin/kdialog" if n == "kdialog" else None)
+    b = BlockInfo("r", DetClass.SECRET, Action.BLOCK, "loc<b>", "ex<i>&", "h", "abc")
+    LinuxChannel().request_justification(b, "w<u>")
+    body = run.calls[0][0][-1]
+    assert "<" not in body.replace("&lt;", "") and "w&lt;u&gt;" in body and "ex&lt;i&gt;&amp;" in body

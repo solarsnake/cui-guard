@@ -123,3 +123,52 @@ async def test_no_override_message_uses_poc(tmp_path):
         r = await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)
     m = r.json()["error"]["message"]
     assert "No override available." in m and "contact ISSO x1234" in m
+
+
+async def test_override_for_a_does_not_cover_b(tmp_path):
+    up = Upstream()
+    ch = FakeChannel(JUSTIFICATION, True)
+    async with client(make_cfg(tmp_path), up, channel=ch) as c:
+        await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)
+        assert await until(lambda: override_rows(tmp_path))
+        ok = await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)
+        other = await c.post("/v1/messages", json=msg(f"different {CUI} text"), headers=H)
+    assert ok.status_code == 200
+    assert other.status_code == 400 and len(up.requests) == 1
+
+
+async def test_justification_truncated_in_audit(tmp_path):
+    ch = FakeChannel("x" * 900, True)
+    async with client(make_cfg(tmp_path), Upstream(), channel=ch) as c:
+        await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)
+        assert await until(lambda: override_rows(tmp_path))
+    (o,) = override_rows(tmp_path)[0]["override"]
+    assert o["justification"] == "x" * 500
+    assert "x" * 501 not in (tmp_path / "audit.jsonl").read_text()
+
+
+async def test_prompt_cooldown_and_cap(tmp_path):
+    now = [1000.0]
+    ch = FakeChannel(None, False)  # every flow is cancelled
+    cfg = make_cfg(tmp_path)
+    import httpx
+
+    from cui_guard.gateway.app import create_app
+
+    app = create_app(cfg, transport=httpx.MockTransport(Upstream()), channel=ch, clock=lambda: now[0])
+    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
+    async with c:
+        async def attempt(n):
+            await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)
+            await asyncio.sleep(0.15)
+            assert len(ch.justification_requests) == n
+
+        await attempt(1)
+        await attempt(1)  # inside the 60 s cooldown
+        now[0] += 61
+        await attempt(2)
+        now[0] += 61
+        await attempt(3)
+        assert await until(lambda: any(o is False for _, o in ch.notifications[3:]))
+        now[0] += 10_000
+        await attempt(3)  # capped for the session

@@ -11,7 +11,7 @@ import re
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
@@ -52,6 +52,8 @@ _HOP_BY_HOP = frozenset(
 )  # fmt: skip
 _DROP_RESPONSE = _HOP_BY_HOP | {"content-encoding"}
 _LEFTOVER_NOTE = re.compile(r"leftover_placeholders=(\d+)")
+PROMPT_COOLDOWN_S = 60.0
+MAX_UNGRANTED_FLOWS = 3
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
@@ -156,6 +158,7 @@ def create_app(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     channel: HumanChannel | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Starlette:
     policy = cfg.policy
     lane = cfg.lane
@@ -179,6 +182,8 @@ def create_app(
     state = {"leftover_notified": False}
     in_flight: set[str] = set()
     in_flight_lock = threading.Lock()
+    ungranted: dict[str, int] = {}  # flows per override id that ended without a grant
+    last_ended: dict[str, float] = {}
 
     def notify(fn, *args) -> None:
         if channel is None:
@@ -197,6 +202,7 @@ def create_app(
         """Human flow for one override ID, on its own thread: notify, justify, authenticate, grant."""
         assert channel is not None and block.override_id is not None
         oid = block.override_id
+        granted = False
         try:
             channel.notify_block(block, True)
             warning = render(messages[warning_key(block)], policy.poc)
@@ -216,11 +222,20 @@ def create_app(
                 request_hash=block.content_hash, overrides=[entry], action="override",
             )  # fmt: skip
             overrides.grant(oid, justification)
+            granted = True
         except Exception:  # noqa: BLE001, S110 - any failure means no override
             pass
         finally:
+            suppress_now = False
             with in_flight_lock:
                 in_flight.discard(oid)
+                if not granted:
+                    ungranted[oid] = ungranted.get(oid, 0) + 1
+                    last_ended[oid] = clock()
+                    suppress_now = ungranted[oid] == MAX_UNGRANTED_FLOWS
+            if suppress_now:
+                with contextlib.suppress(Exception):
+                    channel.notify_block(block, False)  # the block stands; no more prompts
 
     def start_override_flow(block: BlockInfo) -> None:
         oid = block.override_id
@@ -229,6 +244,11 @@ def create_app(
         with in_flight_lock:
             if oid in in_flight:
                 return  # a dialog for this content is already open
+            if ungranted.get(oid, 0) >= MAX_UNGRANTED_FLOWS:
+                return  # prompt fatigue: the block stands for this session
+            ended = last_ended.get(oid)
+            if ended is not None and clock() - ended < PROMPT_COOLDOWN_S:
+                return
             in_flight.add(oid)
         try:
             threading.Thread(target=run_override_flow, args=(block,), daemon=True).start()
