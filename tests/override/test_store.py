@@ -23,3 +23,11 @@ def test_grant_scoped_to_hash_and_rule():
 def test_unknown_override_id():
     with pytest.raises(KeyError):
         OverrideStore().grant("nope", "why")
+
+
+def test_register_same_hash_and_rule_returns_existing_id():
+    s = OverrideStore()
+    a = s.register(block("h1", "r1"))
+    assert s.register(block("h1", "r1")) == a
+    assert s.register(block("h2", "r1")) != a
+    assert s.register(block("h1", "r2")) != a

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -100,11 +101,15 @@ class Pipeline:
         # (text digest, session map size) of segments the echo re-mask left unchanged.
         # The re-mask depends only on the map's contents, which only grow.
         self._unchanged: set[tuple[str, int]] = set()
+        self._unchanged_lock = threading.Lock()
 
     def evaluate(self, view: RequestView) -> Decision:
         try:
-            future = _EXECUTOR.submit(self._evaluate, view)
-            return future.result(timeout=self._timeout_s)
+            # The worker runs pure detection only; every decision and mutation
+            # happens here, so a timed-out worker can change nothing.
+            future = _EXECUTOR.submit(self._scan_all, [s.text for s in view.segments])
+            all_hits = future.result(timeout=self._timeout_s)
+            return self._evaluate(view, all_hits)
         except Exception as e:  # noqa: BLE001 - fail closed on anything, incl. timeout
             return self._internal_error(type(e).__name__)
 
@@ -116,13 +121,16 @@ class Pipeline:
         )  # fmt: skip
         return Decision(blocked=[block], hit_counts={"internal.error": 1})
 
-    def _evaluate(self, view: RequestView) -> Decision:
+    def _scan_all(self, texts: list[str]) -> list[list[Hit]]:
+        return [self._detector.scan(t) for t in texts]
+
+    def _evaluate(self, view: RequestView, all_hits: list[list[Hit]]) -> Decision:
         d = Decision()
         for loc in view.unparseable:
             self._add_block(d, "unparseable", DetClass.UNPARSEABLE, Action.BLOCK_HARD,
                             loc, "unknown content type", _sha256(loc))  # fmt: skip
-        for seg in view.segments:
-            self._segment(d, seg)
+        for seg, hits in zip(view.segments, all_hits, strict=True):
+            self._segment(d, seg, hits)
         for op in view.opaque:
             self._opaque(d, op)
         return d
@@ -134,8 +142,7 @@ class Pipeline:
         )
         d.hit_counts[rule_id] = d.hit_counts.get(rule_id, 0) + 1
 
-    def _segment(self, d: Decision, seg: Segment) -> None:
-        hits = self._detector.scan(seg.text)
+    def _segment(self, d: Decision, seg: Segment, hits: list[Hit]) -> None:
         digest = _sha256(seg.text)
         to_mask: list[Hit] = []
         for hit in hits:
@@ -164,16 +171,19 @@ class Pipeline:
                 info.override_id = self._overrides.register(info)
             d.blocked.append(info)
             d.hit_counts[hit.rule_id] = d.hit_counts.get(hit.rule_id, 0) + 1
-        key = (digest, len(self._smap))
-        if not to_mask and key in self._unchanged:
-            return
+        key = (digest, len(self._smap))  # read once: used for lookup and store
+        if not to_mask:
+            with self._unchanged_lock:
+                if key in self._unchanged:
+                    return
         new_text = self._smap.pseudonymize(seg.text, to_mask)
         if new_text != seg.text:
             d.replacements[seg.index] = new_text
         elif not to_mask:
-            if len(self._unchanged) >= _UNCHANGED_MAX:
-                self._unchanged.clear()
-            self._unchanged.add((digest, len(self._smap)))
+            with self._unchanged_lock:
+                if len(self._unchanged) >= _UNCHANGED_MAX:
+                    self._unchanged.clear()
+                self._unchanged.add(key)
 
     def _opaque(self, d: Decision, op: Opaque) -> None:
         forced = op.kind in _ALWAYS_BLOCKED_OPAQUE and self._trust != Trust.LOCAL

@@ -19,8 +19,14 @@ class OverrideStore:
         self._justifications: dict[tuple[str, str], str] = {}
 
     def register(self, block: BlockInfo) -> str:
-        override_id = secrets.token_hex(8)
         with self._lock:
+            for oid, existing in self._pending.items():
+                if (existing.content_hash, existing.rule_id) == (
+                    block.content_hash,
+                    block.rule_id,
+                ):
+                    return oid
+            override_id = secrets.token_hex(8)
             self._pending[override_id] = replace(block, override_id=override_id)
         return override_id
 

@@ -174,3 +174,77 @@ def test_cached_history_latency_budget():
         times.append(time.perf_counter() - t0)
     p95 = statistics.quantiles(times, n=20)[-1]
     assert p95 <= 0.050, p95
+
+
+def test_timed_out_worker_mutates_nothing():
+    from cui_guard.model import Hit
+
+    class SlowHits:
+        def scan(self, text):
+            time.sleep(0.3)
+            return [Hit("cui.test", DetClass.CUI_MARKING, 0, 3, text[:3], "term")]
+
+    store = OverrideStore()
+    smap = SessionMap()
+    pipe = Pipeline(POLICY, SlowHits(), smap, Trust.PUBLIC, store, 0.05)
+    d = pipe.evaluate(view("abcdef", "ghijkl"))
+    assert [b.rule_id for b in d.blocked] == ["internal.error"]
+    time.sleep(0.8)  # let the worker finish
+    assert len(smap) == 0
+    assert store._pending == {}
+    assert pipe._unchanged == set()
+
+
+def test_unchanged_cache_invalidated_when_map_grows():
+    pipe, _ = make()
+    # Segment B has an ordinary word; it is not detected, so it is cached as unchanged.
+    d = pipe.evaluate(view("plain words only"))
+    assert d.replacements == {}
+    pipe.evaluate(view("plain words only"))  # cached path
+    # A later request maps "plain" via a hit; echo re-mask must now apply to the old segment.
+    from cui_guard.model import Hit
+
+    class OneHit:
+        def scan(self, text):
+            i = text.find("plain")
+            if text.startswith("map ") and i >= 0:
+                return [Hit("t.id", DetClass.IDENTIFIER, i, i + 5, "plain", "term")]
+            return []
+
+    pipe2 = Pipeline(POLICY, OneHit(), pipe._smap, Trust.PUBLIC, OverrideStore())
+    pipe2._unchanged = pipe._unchanged
+    assert pipe2.evaluate(view("plain words only")).replacements == {}
+    assert pipe2.evaluate(view("map plain")).replacements == {0: "map CG_TERM_01"}
+    d = pipe2.evaluate(view("plain words only"))
+    assert d.replacements == {0: "CG_TERM_01 words only"}
+
+
+def test_pseudonymize_hit_without_kind_blocks():
+    from cui_guard.model import Hit
+
+    class NoKind:
+        def scan(self, text):
+            return [Hit("t.nokind", DetClass.SECRET, 0, 3, text[:3], None)]
+
+    d = make(det=NoKind())[0].evaluate(view("abcdef"))
+    assert not d.forward
+    assert d.blocked[0].action == Action.BLOCK
+    assert d.blocked[0].override_id is not None
+
+
+def test_url_source_and_encrypted_replaced_on_public():
+    v = view("hi", opaque=[Opaque(0, "a", "url_source"), Opaque(1, "b", "encrypted")])
+    d = make(Trust.PUBLIC)[0].evaluate(v)
+    assert d.forward and d.replace_opaque == {0, 1}
+
+
+def test_image_untouched_on_approved():
+    v = view("hi", opaque=[Opaque(0, "a", "image")])
+    d = make(Trust.APPROVED)[0].evaluate(v)
+    assert d.forward and d.replace_opaque == set()
+
+
+def test_block_and_replacements_together():
+    d = make()[0].evaluate(view(f"{CUI} here", "connect to db.example.mil"))
+    assert not d.forward
+    assert 1 in d.replacements and "host-01.cg.invalid" in d.replacements[1]
