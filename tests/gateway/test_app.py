@@ -382,3 +382,63 @@ def test_config_json_roundtrip(tmp_path):
     again = GatewayConfig.from_json(cfg.to_json())
     assert again.lane == cfg.lane and again.policy.to_dict() == cfg.policy.to_dict()
     assert again.token == TOKEN and again.credential_mode == "gateway"
+
+
+async def test_responses_route_end_to_end(tmp_path):
+    def handler(req):
+        text = json.loads(req.content)["input"][0]["content"]
+        out = {"id": "r", "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}]}
+        return httpx.Response(200, json=out)
+
+    up = Upstream(handler)
+    body = {"model": "m", "input": [{"role": "user", "content": f"connect to {HOST}"}]}
+    async with client(make_cfg(tmp_path, formats=("openai-responses",)), up) as c:
+        r = await c.post("/v1/responses", json=body, headers=H)
+    assert r.status_code == 200
+    assert HOST not in up.bodies[0]
+    assert r.json()["output"][0]["content"][0]["text"] == f"connect to {HOST}"
+    assert audit_rows(tmp_path)[0]["action"] == "forwarded"
+
+
+async def test_responses_blocked_uses_openai_error_shape(tmp_path):
+    up = Upstream()
+    body = {"model": "m", "input": f"{CUI} text"}
+    async with client(make_cfg(tmp_path, formats=("openai-responses",)), up) as c:
+        r = await c.post("/v1/responses", json=body, headers=H)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "cui_guard_blocked"
+    assert up.requests == []
+
+
+async def test_chat_route_end_to_end(tmp_path):
+    def handler(req):
+        text = json.loads(req.content)["messages"][0]["content"]
+        return httpx.Response(200, json={"choices": [{"index": 0, "message": {"role": "assistant", "content": text}}]})
+
+    up = Upstream(handler)
+    body = {"model": "m", "messages": [{"role": "user", "content": f"connect to {HOST}"}]}
+    async with client(make_cfg(tmp_path, formats=("openai-chat",)), up) as c:
+        r = await c.post("/v1/chat/completions", json=body, headers=H)
+    assert r.status_code == 200
+    assert HOST not in up.bodies[0]
+    assert r.json()["choices"][0]["message"]["content"] == f"connect to {HOST}"
+    assert up.requests[0].headers["authorization"] == "Bearer up-key"
+
+
+async def test_chat_stream_end_to_end(tmp_path):
+    def handler(req):
+        ph = PLACEHOLDER_RE.search(req.content.decode()).group(0)
+        chunks = [
+            {"choices": [{"index": 0, "delta": {"content": f"host {ph[:4]}"}, "finish_reason": None}]},
+            {"choices": [{"index": 0, "delta": {"content": ph[4:] + " up"}, "finish_reason": "stop"}]},
+        ]
+        data = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=data.encode())
+
+    up = Upstream(handler)
+    body = {"model": "m", "stream": True, "messages": [{"role": "user", "content": f"ping {HOST}"}]}
+    async with client(make_cfg(tmp_path, formats=("openai-chat",)), up) as c:
+        r = await c.post("/v1/chat/completions", json=body, headers=H)
+    evs = parse_sse(r.content)
+    assert evs[-1].data == "[DONE]"
+    text = "".join(json.loads(e.data)["choices"][0]["delta"].get("content", "") for e in evs[:-1])
+    assert text == f"host {HOST} up"

@@ -1,0 +1,41 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": false,
+  "max_output_tokens": 100,
+  "reasoning": {"effort": "low", "summary": "auto"},
+  "include": ["reasoning.encrypted_content"],
+  "instructions": "Be terse.",
+  "metadata": {"label": "meta-label-1"},
+  "tool_choice": "auto",
+  "text": {"format": {"type": "json_schema", "name": "out", "schema": {"type": "object", "properties": {"ans": {"type": "string", "description": "answer field"}}, "required": ["ans"]}}},
+  "future_key": {"note": "future note"},
+  "input": [
+    {"role": "user", "content": "plain user text"},
+    {"type": "message", "role": "user", "content": [
+      {"type": "input_text", "text": "part text one"},
+      {"type": "input_image", "image_url": "data:image/png;base64,c3ludGhldGlj"},
+      {"type": "input_file", "file_id": "file-abc"},
+      {"type": "input_file", "filename": "a.pdf", "file_data": "c3ludGhldGlj"}
+    ]},
+    {"type": "reasoning", "id": "rs_1", "encrypted_content": "c2lnLXN5bnRoZXRpYw", "summary": [{"type": "summary_text", "text": "Plan: secret"}]},
+    {"type": "message", "role": "assistant", "content": [
+      {"type": "output_text", "text": "assistant text", "annotations": [{"type": "url_citation", "url": "https://x.example/", "title": "cite title"}]},
+      {"type": "refusal", "refusal": "refusal words"}
+    ]},
+    {"type": "function_call", "call_id": "c1", "name": "read_file", "arguments": "{\"path\":\"/tmp/a\",\"opts\":{\"mode\":\"r\"},\"n\":3}"},
+    {"type": "function_call_output", "call_id": "c1", "output": "file contents"},
+    {"type": "function_call_output", "call_id": "c2", "output": [{"type": "input_text", "text": "output part"}]},
+    {"type": "custom_tool_call", "call_id": "c3", "name": "patch", "input": "custom input text"},
+    {"type": "custom_tool_call_output", "call_id": "c3", "output": "custom output text"},
+    {"type": "local_shell_call", "call_id": "c4", "action": {"type": "exec", "command": ["ls", "-la"]}},
+    {"type": "local_shell_call_output", "call_id": "c4", "output": "shell out"},
+    {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+    {"type": "item_reference", "id": "msg_9"}
+  ],
+  "tools": [
+    {"type": "function", "name": "read_file", "description": "Read a file", "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "path desc", "enum": ["enum-a"]}}, "required": ["path"], "additionalProperties": false}},
+    {"type": "web_search"},
+    {"type": "mcp", "server_label": "x", "server_url": "https://mcp.example.mil/sse"}
+  ]
+}

@@ -24,6 +24,8 @@ from starlette.routing import Route
 
 from cui_guard.adapters.anthropic import AnthropicAdapter
 from cui_guard.adapters.base import Adapter
+from cui_guard.adapters.openai_chat import OpenAIChatAdapter
+from cui_guard.adapters.openai_responses import OpenAIResponsesAdapter
 from cui_guard.adapters.sse import SSEDecoder, SSEEvent, encode_event
 from cui_guard.audit import AuditLog, AuditUnavailable, sha256_json
 from cui_guard.detect.engine import Detector
@@ -151,7 +153,9 @@ def create_app(
 ) -> Starlette:
     policy = cfg.policy
     lane = cfg.lane
-    adapters: dict[str, Adapter] = {a.format: a for a in (AnthropicAdapter(),)}
+    adapters: dict[str, Adapter] = {
+        a.format: a for a in (AnthropicAdapter(), OpenAIResponsesAdapter(), OpenAIChatAdapter())
+    }
     smap = SessionMap()
     overrides = OverrideStore()
     detector = Detector(load_builtin_rules() + policy.extra_rules, policy.identifiers, load_presidio())

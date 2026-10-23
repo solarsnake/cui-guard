@@ -1,0 +1,27 @@
+{
+  "model": "llama3",
+  "stream": true,
+  "max_tokens": 50,
+  "stop": ["STOPWORD"],
+  "metadata": {"label": "meta-label-1"},
+  "response_format": {"type": "json_schema", "json_schema": {"name": "out", "schema": {"type": "object", "properties": {"ans": {"type": "string", "description": "answer field"}}}}},
+  "future_key": "future note",
+  "messages": [
+    {"role": "system", "content": "Be terse."},
+    {"role": "user", "name": "alice", "content": "plain user text"},
+    {"role": "user", "content": [
+      {"type": "text", "text": "part text one"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,c3ludGhldGlj"}},
+      {"type": "input_audio", "input_audio": {"data": "c3ludGhldGlj", "format": "wav"}},
+      {"type": "file", "file": {"file_id": "file-abc"}}
+    ]},
+    {"role": "assistant", "content": null, "refusal": "refusal words", "reasoning_content": "my reasoning", "tool_calls": [
+      {"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{\"path\":\"/tmp/a\",\"opts\":{\"mode\":\"r\"},\"n\":3}"}}
+    ]},
+    {"role": "tool", "tool_call_id": "call_1", "content": "file contents"},
+    {"role": "tool", "tool_call_id": "call_2", "content": [{"type": "text", "text": "tool part"}]}
+  ],
+  "tools": [
+    {"type": "function", "function": {"name": "read_file", "description": "Read a file", "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "path desc", "enum": ["enum-a"]}}, "required": ["path"]}}}
+  ]
+}
