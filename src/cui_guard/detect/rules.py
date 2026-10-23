@@ -94,8 +94,13 @@ def scan_rules(text: str, rules: list[Rule]) -> list[Hit]:
         for m in rule.pattern.finditer(norm):
             if m.end() == m.start():
                 continue
-            start = index_map[m.start()]
-            end = index_map[m.end() - 1] + 1
+            lo, hi = m.start(), m.end()
+            if "value" in rule.pattern.groupindex and m.start("value") != -1:
+                lo, hi = m.start("value"), m.end("value")
+                if hi == lo:
+                    continue
+            start = index_map[lo]
+            end = index_map[hi - 1] + 1
             hits.append(
                 Hit(
                     rule_id=rule.id,
