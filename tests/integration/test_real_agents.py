@@ -178,5 +178,9 @@ def test_codex_chatgpt_session_behavior(upstream, tmp_path):
     work = tmp_path / "work"
     work.mkdir()
     proc = run_launcher("codex", ["exec", "reply with the word ok"], agent_env(tmp_path, None, None), work)
+    out = proc.stdout + proc.stderr
     print("exit", proc.returncode, "reached lane:", bool(upstream.records))
-    print((proc.stdout + proc.stderr)[-1500:])
+    print(out[-1500:])
+    refused = proc.returncode != 0 and "ChatGPT login" in out and not upstream.records
+    reached = any(r.path.startswith("/v1/responses") for r in upstream.records)
+    assert refused or reached, "neither a launcher refusal nor a request on the lane"

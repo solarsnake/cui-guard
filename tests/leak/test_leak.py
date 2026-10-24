@@ -104,6 +104,20 @@ def test_image_replaced_by_notice_on_public(gateways, upstream, fmt, stream, tru
     assert "[cui-guard:" in sent and "removed" in sent
 
 
+@matrix(("approved", "local"))
+@pytest.mark.parametrize("kind", ["secret_aws", "secret_anthropic"])
+def test_image_forwarded_uninspected_on_approved_and_local(
+    gateways, upstream, fmt, stream, trust, kind
+):
+    """Controller ruling: images are opaque; approved and local lanes forward them as-is."""
+    gw = gateways(trust)
+    resp = send(gw, fmt, build(fmt, "image", carrier(kind), stream))
+    assert resp.status_code == 200
+    sent = upstream.all_bytes().decode()
+    assert image_b64(carrier(kind)) in sent
+    assert "[cui-guard:" not in sent
+
+
 @matrix(("public",))
 def test_round_trip_tool_command(gateways, upstream, fmt, stream, trust):
     gw = gateways(trust)
@@ -184,7 +198,8 @@ def test_fail_closed_on_malformed_json(gateways, upstream, fmt, trust):
     for raw in (b"{not json", b"", b"[1, 2]", b'"just a string"', b"{" * 5000, b"\xff\xfe\x00"):
         upstream.reset()
         resp = gw.post(PATHS[fmt], raw)
-        assert resp.status_code >= 400, raw[:20]
+        assert resp.status_code == 400, raw[:20]
+        assert "unparseable" in resp.text, raw[:20]
         assert upstream.records == []
 
 
@@ -208,7 +223,8 @@ UNKNOWN = {
 def test_fail_closed_on_unknown_block(gateways, upstream, fmt, trust):
     gw = gateways(trust)
     resp = send(gw, fmt, UNKNOWN[fmt]())
-    assert resp.status_code >= 400
+    assert resp.status_code == 400
+    assert "unparseable" in resp.text
     assert upstream.records == []
 
 

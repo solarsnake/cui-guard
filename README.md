@@ -38,7 +38,7 @@ A lane is an upstream endpoint with a trust level that you declare:
 
 Built-in lanes: `anthropic` and `openai` (public) and `ollama` (local). Add your own in the user config.
 
-Default handling (spec 3.4): classified markings and unparseable requests are always blocked, on every lane, and nothing can change that. On a public lane CUI markings and controlled content are blocked, identifiers (hosts, IPs, emails, ticket keys, codenames, names) are replaced with reversible placeholders, secrets are replaced with placeholders, and images and other opaque content are replaced with a short notice. On approved and local lanes CUI is allowed; secrets are still replaced.
+Default handling (spec 3.4): classified markings and unparseable requests are always blocked, on every lane, and nothing can change that. On a public lane CUI markings and controlled content are blocked, identifiers (hosts, IPs, emails, ticket keys, codenames, names) are replaced with reversible placeholders, secrets are replaced with placeholders, and images and other opaque content are replaced with a short notice. On approved and local lanes CUI is allowed; secrets in text are still replaced. Exception: images and other opaque content cannot be read, so on approved and local lanes they are forwarded uninspected (an image containing a secret is not caught).
 
 ## Profiles and policy layers
 

@@ -13,7 +13,7 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **Authority phrases can hard-block ordinary prose.** "Classified by: the committee" blocks, because the colon form is treated as a classification authority line.
 - **`fw_dump` is IPv4-only.** The firewall-dump heuristic ignores IPv6 ranges.
 - **Headers and query strings are not scanned.** Only the request body is inspected. Agent-controlled headers (for example `ANTHROPIC_CUSTOM_HEADERS`) or URL query strings could carry a value past the guard.
-- **Images and other opaque content are replaced, not read.** On public lanes they are removed and a notice is sent instead. On approved and local lanes they are forwarded without inspection.
+- **Images and other opaque content are replaced, not read.** On public lanes they are removed and a notice is sent instead. On approved and local lanes they are forwarded without inspection, so a secret or identifier shown inside an image is not caught there. This exception is pinned by a leak test.
 
 ## Credentials and the agent
 
@@ -22,6 +22,18 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **A keyring-stored Codex ChatGPT login cannot be detected.** The launcher refuses when it finds a ChatGPT login in Codex's file store, but it cannot see one kept in the OS keyring.
 - **Background agents cannot reach the gateway.** The session token is passed through the environment only and is never written to disk, so Claude Code background agents that do not inherit the shell environment get a 401 (the request fails closed). They are unusable under cui-guard in v1.
 - **Organization pinning needs a fixed-port gateway.** The emitted Claude Code managed settings pin a fixed gateway URL, but v1 gateways use a random per-session port. Organizations cannot yet use provider pinning with the v1 launcher; this is planned for phase 2. Codex has no provider allowlist in its requirements file, so for Codex the provider can only be pinned by using the cui-guard launcher.
+
+## Detection quirks
+
+- **Protocol-relative uppercase hosts.** A link written like `//SAP.COM` can hard-block as a classified marking, and classified blocks cannot be overridden. Write the full URL in lowercase.
+- **Marking-like URLs.** A URL such as `https://NOFORN.example` can trip a CUI-marking block on a public lane. This one can be overridden.
+- **Line-ending normalization.** For detection only, Windows line endings (CRLF) are normalized before scanning. This does not change the text that is forwarded.
+- **Tool schema property names are not scanned.** Descriptions and values in a tool's input schema are scanned, but the property names themselves are not. A sensitive word used as a property name can reach the upstream.
+- **Streaming hold-back gap.** If a provider starts a text block with non-empty text in its opening event (the API normally sends an empty string), that first text bypasses the hold-back that rejoins split placeholders.
+- **Echoed response fields.** Top-level response fields that echo your request (such as `instructions`) are not restored from placeholders. This is cosmetic.
+- **Settings-file credentials.** An `ANTHROPIC_API_KEY` or auth token set in a Claude settings file is not flagged by the launcher. Traffic still goes through the gateway, because the launcher's own settings take precedence for the base URL.
+- **`cui-guard policy` view.** The default view does not show which layer each individual identifier literal came from. Use `--show-identifiers` only when it is safe to print them.
+- **Audit hit counts include allowed hits.** Counts in the audit log include matches that policy allowed, so a count does not mean something was blocked or replaced.
 
 ## Data on disk
 
