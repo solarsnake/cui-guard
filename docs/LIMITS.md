@@ -36,7 +36,7 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 
 ## Not supported
 
-- **Cursor** is not supported. It does not let the user route model traffic through a local base URL in a way the guard can enforce.
+- **Cursor** is not supported in v1.
 - Native Windows is out of scope. WSL2 works.
 - Per-project mapping persistence is not implemented; the map is in memory for the session.
 

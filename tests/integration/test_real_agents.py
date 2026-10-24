@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "leak"))
-from harness import FakeUpstream, write_user_config  # noqa: E402
+from harness import FakeUpstream, write_user_config
 
 CLI = Path(sys.executable).parent / "cui-guard"
 BYPASS_HOSTS = ("api.anthropic.com", "statsig", "datadoghq", "sentry")
