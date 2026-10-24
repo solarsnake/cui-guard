@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cui_guard.launch.claude import _LOCKDOWN_ENV
+from cui_guard.launch.claude import DENY_TOOLS, LOCKDOWN_ENV
 
 
 def emit_claude_managed_settings(gateway_url: str) -> dict:
@@ -10,17 +10,19 @@ def emit_claude_managed_settings(gateway_url: str) -> dict:
 
     The Claude in Chrome server is denied through `permissions.deny`. The
     `deniedMcpServers` entry shape is not confirmed in the research notes, so it is not emitted.
+    The per-user Edit/Write denies on the cui-guard config and state directories are omitted
+    because those paths differ for every user; the launcher adds them to each session.
     """
     return {
         "allowedProviders": ["customEndpoint"],
-        "env": {"ANTHROPIC_BASE_URL": gateway_url, **_LOCKDOWN_ENV},
+        "env": {"ANTHROPIC_BASE_URL": gateway_url, **LOCKDOWN_ENV},
         "skipWebFetchPreflight": True,
         "allowManagedHooksOnly": True,
         "allowManagedMcpServersOnly": True,
         "allowManagedPermissionRulesOnly": True,
         "permissions": {
             "disableBypassPermissionsMode": "disable",
-            "deny": ["WebSearch", "mcp__claude-in-chrome"],
+            "deny": list(DENY_TOOLS),
         },
     }
 
@@ -41,5 +43,6 @@ def emit_codex_requirements() -> str:
 # Review your provider's terms of service before relying on any of these settings.
 
 allow_managed_hooks_only = true
+# "api" only: this blocks use of Codex with a ChatGPT login.
 allowed_login_methods = ["api"]
 """

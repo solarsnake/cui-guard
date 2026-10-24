@@ -27,7 +27,7 @@ from cui_guard.policy.loader import state_dir, user_config_path
 
 MIN_CLAUDE_VERSION = "2.1.285"
 
-_LOCKDOWN_ENV = {
+LOCKDOWN_ENV = {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
@@ -38,6 +38,8 @@ _LOCKDOWN_ENV = {
     "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
 }
 
+
+DENY_TOOLS = ("WebSearch", "mcp__claude-in-chrome")
 
 _STRIP_EXACT = (
     "ANTHROPIC_BEDROCK_BASE_URL",
@@ -108,7 +110,7 @@ def check_claude_version(output: str) -> None:
 
 
 def _base_url_env(s: GatewaySession) -> dict[str, str]:
-    return {"ANTHROPIC_BASE_URL": f"http://127.0.0.1:{s.port}", **_LOCKDOWN_ENV}
+    return {"ANTHROPIC_BASE_URL": f"http://127.0.0.1:{s.port}", **LOCKDOWN_ENV}
 
 
 def build_claude_env(base: Mapping[str, str], s: GatewaySession) -> dict[str, str]:
@@ -137,8 +139,7 @@ def build_claude_settings(s: GatewaySession) -> dict:
         "skipWebFetchPreflight": True,
         "permissions": {
             "deny": [
-                "WebSearch",
-                "mcp__claude-in-chrome",
+                *DENY_TOOLS,
                 f"Edit({cfg_dir}/**)",
                 f"Write({cfg_dir}/**)",
                 f"Edit({st_dir}/**)",

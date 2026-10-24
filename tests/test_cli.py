@@ -19,7 +19,7 @@ def test_scan_reports_without_values(tmp_path, capsys):
     main(["scan", str(f)])
     out = capsys.readouterr().out
     assert canary not in out
-    assert "2:" in out
+    assert out.splitlines()[0].split()[2] == "2:7"
 
 
 def test_scan_exit_code_block(tmp_path, capsys):
@@ -86,3 +86,32 @@ def test_loose_profile_warns(monkeypatch, capsys):
     monkeypatch.setattr("cui_guard.cli.run_generic", lambda cmd, lane, headless: 0)
     assert main(["run", "--profile", "loose", "--", "echo"]) == 0
     assert "ignored" in capsys.readouterr().err
+
+
+def _write_user_config(isolated_dirs, body):
+    p = loader.user_config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+
+
+def test_policy_identifiers_counts_by_default(isolated_dirs, capsys):
+    _write_user_config(isolated_dirs, '[identifiers]\ncodenames = ["ZEPHYRFALCON", "OTHERNAME"]\n')
+    assert main(["policy"]) == 0
+    out = capsys.readouterr().out
+    assert "ZEPHYRFALCON" not in out
+    assert '"codenames": 2' in out
+    assert main(["policy", "--show-identifiers"]) == 0
+    assert "ZEPHYRFALCON" in capsys.readouterr().out
+
+
+def test_policy_never_prints_extra_rule_regex(isolated_dirs, capsys):
+    regex = "zq9distinctive[0-9]{4}wx"
+    _write_user_config(
+        isolated_dirs,
+        f'[[patterns]]\nid = "user-x"\nclass = "secret"\nregex = "{regex}"\n',
+    )
+    for extra in ([], ["--show-identifiers"]):
+        assert main(["policy", *extra]) == 0
+        out = capsys.readouterr().out
+        assert "user-x" in out
+        assert "zq9distinctive" not in out

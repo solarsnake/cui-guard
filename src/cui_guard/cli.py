@@ -54,7 +54,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="list running sessions")
     sp = sub.add_parser("log", help="show recent audit records")
     sp.add_argument("-n", type=int, default=20)
-    sub.add_parser("policy", help="show the effective policy and where each setting came from")
+    sp = sub.add_parser("policy", help="show the effective policy and where each setting came from")
+    sp.add_argument("--show-identifiers", action="store_true", help="print identifier literals")
     sp = sub.add_parser("setup", help="optional setup steps")
     sp.add_argument("what", choices=["ner"])
     sp.add_argument("--yes", action="store_true")
@@ -184,9 +185,17 @@ def _cmd_log(n: int) -> int:
     return 0
 
 
-def _cmd_policy() -> int:
+def _cmd_policy(show_identifiers: bool) -> int:
     policy = _policy()
     d = policy.to_dict()
+    if not show_identifiers:
+        d["identifiers"] = {k: len(v) for k, v in d["identifiers"].items()}
+        kinds = tuple(f"identifiers.{k}." for k in d["identifiers"])
+        prov: dict[str, str] = {}
+        for k, v in d["provenance"].items():
+            kind = next((p for p in kinds if k.startswith(p)), None)
+            prov[kind + "*" if kind else k] = v
+        d["provenance"] = prov
     d["extra_rules"] = [
         {"id": r["id"], "class": r.get("class"), "source": r.get("source")}
         if isinstance(r, dict)
@@ -257,7 +266,7 @@ def _dispatch(argv: list[str]) -> int:
     if cmd == "log":
         return _cmd_log(args.n)
     if cmd == "policy":
-        return _cmd_policy()
+        return _cmd_policy(args.show_identifiers)
     if cmd == "setup":
         return _cmd_setup_ner(args.yes)
     return _cmd_org(args)
