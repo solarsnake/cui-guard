@@ -225,3 +225,19 @@ def test_presidio_model_absent_builds_nothing(monkeypatch):
     assert load_presidio() is None
     assert built == []
     monkeypatch.setattr(importlib.util, "find_spec", real)
+
+
+def test_overlap_resolution_linear_without_overlaps():
+    import time
+
+    n = 24_000
+    text = " ".join(f"h{i:05d}" for i in range(n))
+    hits = [
+        Hit("id.host", DetClass.IDENTIFIER, i * 7, i * 7 + 6, text[i * 7 : i * 7 + 6], "host")
+        for i in range(n)
+    ]
+    t0 = time.perf_counter()
+    out = engine._resolve_overlaps(hits, text)
+    elapsed = time.perf_counter() - t0
+    assert sorted(out, key=lambda h: h.start) == hits
+    assert elapsed < 1.0, elapsed

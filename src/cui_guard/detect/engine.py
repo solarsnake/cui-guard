@@ -87,27 +87,24 @@ def _resolve_overlaps(hits: list[Hit], text: str) -> list[Hit]:
     fully contains a secret is split: the secret keeps its own
     placeholder (e.g. user:pw@host read as an email) and the container's
     uncovered remainder pieces that hold alphanumerics stay masked.
+
+    Sweep line over hits sorted by (start, -end). Kept hits stay disjoint
+    and ordered, so a new hit can only overlap the last kept one.
     """
     others = [h for h in hits if h.kind is None]
-    work = sorted((h for h in hits if h.kind is not None), key=lambda h: h.start)
+    ordered = sorted(
+        (h for h in hits if h.kind is not None), key=lambda h: (h.start, -h.end, _rank(h))
+    )
+    work: list[Hit] = []
     dropped: list[Hit] = []
-    changed = True
-    while changed:
-        changed = False
-        for i in range(len(work)):
-            for j in range(i + 1, len(work)):
-                a, b = work[i], work[j]
-                if a.end <= b.start or b.end <= a.start:
-                    continue
-                kept, drop = _merge_pair(a, b, text)
-                work = [h for k, h in enumerate(work) if k not in (i, j)]
-                work.append(kept)
-                if drop is not None:
-                    dropped.append(drop)
-                changed = True
-                break
-            if changed:
-                break
+    for h in ordered:
+        if not work or work[-1].end <= h.start:
+            work.append(h)
+            continue
+        kept, drop = _merge_pair(work[-1], h, text)
+        work[-1] = kept
+        if drop is not None:
+            dropped.append(drop)
     pieces = [p for d in dropped for p in _remainders(d, work, text)]
     if pieces:
         work += _resolve_overlaps(pieces, text)
