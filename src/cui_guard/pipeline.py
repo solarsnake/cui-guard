@@ -184,7 +184,8 @@ class Pipeline:
                 info.override_id = self._overrides.register(info)
             d.blocked.append(info)
             d.hit_counts[hit.rule_id] = d.hit_counts.get(hit.rule_id, 0) + 1
-        key = (digest, len(self._smap))  # read once: used for lookup and store
+        size = len(self._smap)
+        key = (digest, size)
         if not to_mask:
             with self._unchanged_lock:
                 if key in self._unchanged:
@@ -192,7 +193,9 @@ class Pipeline:
         new_text = self._smap.pseudonymize(seg.text, to_mask)
         if new_text != seg.text:
             d.replacements[seg.index] = new_text
-        elif not to_mask:
+        elif not to_mask and len(self._smap) == size:
+            # Re-checked after the re-mask: if another request grew the map meanwhile,
+            # this result is not cached, so the next request re-masks against the new values.
             with self._unchanged_lock:
                 if len(self._unchanged) >= _UNCHANGED_MAX:
                     self._unchanged.clear()

@@ -285,3 +285,25 @@ def test_readonly_clean_or_allowed_forwards_untouched():
     key = "sk-" + "ant-" + "A" * 24
     d = make(Trust.LOCAL)[0].evaluate(ro_view("hi", ro=[f"key {key}"]))
     assert [b.rule_id for b in d.blocked] == ["history.thinking_sensitive"]
+
+
+def test_unchanged_cache_skipped_when_map_grows_mid_evaluate():
+    """A value another request maps while this segment is re-masked must not be cached past (M7)."""
+
+    class GrowingMap(SessionMap):
+        grown = False
+
+        def pseudonymize(self, text, hits):
+            out = super().pseudonymize(text, hits)
+            if not self.grown:  # another request maps "plain" right after our re-mask
+                self.grown = True
+                self.placeholder_for("plain", "term")
+            return out
+
+    smap = GrowingMap()
+    pipe = Pipeline(POLICY, detector(), smap, Trust.PUBLIC, OverrideStore())
+    assert pipe.evaluate(view("plain words only")).replacements == {}
+    assert pipe._unchanged == set()  # the re-mask ran against a map that has since grown
+    assert pipe.evaluate(view("plain words only")).replacements == {0: "CG_TERM_01 words only"}
+    assert pipe.evaluate(view("other words")).replacements == {}
+    assert len(pipe._unchanged) == 1  # a stable map still caches
