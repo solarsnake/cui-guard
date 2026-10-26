@@ -57,15 +57,16 @@ def test_claude_settings_denies():
     st = build_claude_settings(fake_session("gateway"))
     deny = st["permissions"]["deny"]
     cfg, state = user_config_path().parent, state_dir()
-    for item in (
+    assert cfg.is_absolute() and state.is_absolute()
+    # "//" anchors at the filesystem root; a single "/" would be relative to the settings file.
+    assert deny == [
         "WebSearch",
         "mcp__claude-in-chrome",
-        f"Edit({cfg}/**)",
-        f"Write({cfg}/**)",
-        f"Edit({state}/**)",
-        f"Write({state}/**)",
-    ):
-        assert item in deny
+        f"Edit(//{str(cfg).lstrip('/')}/**)",
+        f"Edit(//{str(state).lstrip('/')}/**)",
+    ]
+    assert all(r.startswith("Edit(//") and not r.startswith("Edit(///") for r in deny[2:])
+    assert not any(r.startswith("Write(") for r in deny)
     assert st["skipWebFetchPreflight"] is True
     assert st["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:4321"
     assert TOKEN not in json.dumps(st)

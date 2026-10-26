@@ -132,21 +132,26 @@ def build_claude_env(base: Mapping[str, str], s: GatewaySession) -> dict[str, st
 
 def build_claude_settings(s: GatewaySession) -> dict:
     """Settings file content. The token is never written here; it travels in the env only."""
-    cfg_dir = user_config_path().parent
-    st_dir = state_dir()
     return {
         "env": _base_url_env(s),
         "skipWebFetchPreflight": True,
         "permissions": {
             "deny": [
                 *DENY_TOOLS,
-                f"Edit({cfg_dir}/**)",
-                f"Write({cfg_dir}/**)",
-                f"Edit({st_dir}/**)",
-                f"Write({st_dir}/**)",
+                _edit_deny(user_config_path().parent),
+                _edit_deny(state_dir()),
             ]
         },
     }
+
+
+def _edit_deny(path: Path) -> str:
+    """Claude Code Edit rule for an absolute directory.
+
+    A single leading "/" anchors at the settings file's directory; "//" means the
+    filesystem root. Edit rules cover every built-in file-editing tool.
+    """
+    return f"Edit(//{str(path.absolute()).lstrip('/')}/**)"
 
 
 def run_claude(args: list[str], lane: str | None, headless: bool) -> int:
