@@ -29,6 +29,7 @@ _FORMATS = {
     "secret": lambda n: f"CG_SECRET_{n:02d}",
     "term": lambda n: f"CG_TERM_{n:02d}",
 }
+PLACEHOLDER_KINDS = frozenset(_FORMATS)
 
 
 class SessionMap:

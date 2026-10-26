@@ -119,7 +119,7 @@ def _action(where: str, value: Any) -> Action:
 
 
 def _credential_ok(cred: str) -> bool:
-    if cred in ("none", "passthrough"):
+    if cred == "none":
         return True
     for prefix in _CRED_PREFIXES:
         if cred.startswith(prefix):
@@ -144,6 +144,11 @@ def _parse_endpoint(name: str, raw: Any) -> Endpoint:
             f"{where}.formats: must be a non-empty subset of {sorted(FORMATS)}"
         )
     cred = _str(f"{where}.credential", t.get("credential", "none"))
+    if cred == "passthrough":
+        raise PolicyError(
+            f"{where}.credential: bare 'passthrough' is not supported; "
+            "use 'env-or-passthrough:VAR'"
+        )
     if not _credential_ok(cred):
         raise PolicyError(f"{where}.credential: invalid credential {cred!r}")
     return Endpoint(

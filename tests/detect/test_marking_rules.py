@@ -168,13 +168,13 @@ def test_control_markings_still_hit():
 
 def test_rules_from_patterns_valid():
     (r,) = rules_from_patterns(
-        [{"id": "org-1", "class": "identifier", "regex": r"ACME-\d+", "kind": "PROJ"}],
+        [{"id": "org-1", "class": "identifier", "regex": r"ACME-\d+", "kind": "jira"}],
         "org.toml",
     )
     assert (r.id, r.cls, r.kind, r.verified, r.source) == (
         "org-1",
         DetClass.IDENTIFIER,
-        "PROJ",
+        "jira",
         True,
         "org.toml",
     )

@@ -9,6 +9,7 @@ from importlib import resources
 
 from cui_guard.detect.normalize import normalize
 from cui_guard.model import DetClass, Hit
+from cui_guard.pseudo.mapper import PLACEHOLDER_KINDS
 
 _FLAGS = {"IGNORECASE": re.IGNORECASE, "MULTILINE": re.MULTILINE}
 
@@ -63,6 +64,22 @@ def load_builtin_rules() -> list[Rule]:
     return rules
 
 
+_MASKABLE = (DetClass.IDENTIFIER, DetClass.SECRET)
+
+
+def _check_kind(rule_id: str, cls: DetClass, kind: object) -> str | None:
+    """A pattern's placeholder kind: a known kind, and only on maskable classes."""
+    if kind is None:
+        return None
+    if cls not in _MASKABLE:
+        raise ValueError(f"rule {rule_id}: kind is only allowed on identifier or secret patterns")
+    if not isinstance(kind, str) or kind not in PLACEHOLDER_KINDS:
+        raise ValueError(
+            f"rule {rule_id}: unknown kind {kind!r}; expected one of {sorted(PLACEHOLDER_KINDS)}"
+        )
+    return kind
+
+
 def rules_from_patterns(entries: list[dict], origin: str) -> list[Rule]:
     """Build rules from user/org [[patterns]] entries (id, class, regex, kind?)."""
     rules: list[Rule] = []
@@ -71,12 +88,14 @@ def rules_from_patterns(entries: list[dict], origin: str) -> list[Rule]:
             if not isinstance(e.get(key), str) or not e[key]:
                 raise ValueError(f"patterns[{n}]: missing or invalid key {key!r}")
         try:
+            cls = _parse_class(e["id"], e["class"])
+            kind = _check_kind(e["id"], cls, e.get("kind"))
             rules.append(
                 Rule(
                     id=e["id"],
-                    cls=_parse_class(e["id"], e["class"]),
+                    cls=cls,
                     pattern=_compile(e["id"], e["regex"], []),
-                    kind=e.get("kind"),
+                    kind=kind,
                     verified=True,
                     source=origin,
                 )

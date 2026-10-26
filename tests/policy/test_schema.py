@@ -60,3 +60,34 @@ def test_paths(monkeypatch, tmp_path: Path):
     assert str(loader.org_policy_path()).startswith("/Library/Application Support/")
     monkeypatch.setattr("sys.platform", "linux")
     assert loader.org_policy_path() == Path("/etc/cui-guard/policy.toml")
+
+
+def _ep_layer(cred):
+    ep = {"url": "https://x.example.invalid", "formats": ["anthropic"], "credential": cred}
+    return {"endpoints": {"x": ep}}
+
+
+def test_bare_passthrough_credential_rejected():
+    """Only env-or-passthrough:VAR is valid; bare "passthrough" is refused at parse time (M8)."""
+    with pytest.raises(PolicyError, match="passthrough"):
+        parse_layer(_ep_layer("passthrough"), "user")
+    for ok in ("none", "env:K", "env-or-passthrough:K", "keychain:svc/acct"):
+        parse_layer(_ep_layer(ok), "user")
+
+
+def _pat(**over):
+    return {"patterns": [{"id": "u.p", "class": "identifier", "regex": "ZZ-[0-9]+", **over}]}
+
+
+def test_pattern_kind_validated():
+    """Pattern kind must be a placeholder kind, and only identifier/secret may set one (M9)."""
+    for kind in ("host", "ip", "email", "jira", "person", "secret", "term"):
+        assert parse_layer(_pat(kind=kind), "org").patterns[0].kind == kind
+    assert parse_layer(_pat(**{"class": "secret", "kind": "secret"}), "user").patterns[0].kind == "secret"
+    assert parse_layer(_pat(**{"class": "cui-marking"}), "user").patterns[0].kind is None
+    for bad in ("tok", "HOST", "", 5, ["host"]):
+        with pytest.raises(PolicyError, match="kind"):
+            parse_layer(_pat(kind=bad), "user")
+    for cls in ("cui-marking", "controlled-content", "classified-marking"):
+        with pytest.raises(PolicyError, match="kind"):
+            parse_layer(_pat(**{"class": cls, "kind": "term"}), "org")

@@ -176,7 +176,7 @@ def test_missing_files_use_builtin(tmp_path):
 
 
 def test_effective_policy_round_trip():
-    pat = {"id": "u.pat", "class": "secret", "regex": "zzz+", "kind": "tok"}
+    pat = {"id": "u.pat", "class": "secret", "regex": "zzz+", "kind": "secret"}
     pol = merged(
         user={
             "patterns": [pat],
@@ -204,7 +204,7 @@ def test_effective_policy_round_trip():
     assert again.poc == "sec@example.invalid"
     (rule,) = again.extra_rules
     assert (rule.id, rule.cls, rule.kind, rule.verified, rule.source) == (
-        "u.pat", DetClass.SECRET, "tok", True, "user",
+        "u.pat", DetClass.SECRET, "secret", True, "user",
     )  # fmt: skip
     assert rule.pattern.search("zzzz")
 
