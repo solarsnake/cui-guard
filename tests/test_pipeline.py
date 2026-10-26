@@ -248,3 +248,40 @@ def test_block_and_replacements_together():
     d = make()[0].evaluate(view(f"{CUI} here", "connect to db.example.mil"))
     assert not d.forward
     assert 1 in d.replacements and "host-01.cg.invalid" in d.replacements[1]
+
+
+def ro_view(*texts, ro=()):
+    v = view(*texts)
+    v.readonly = [Segment(i, f"messages[1].content[{i}].thinking", t) for i, t in enumerate(ro)]
+    return v
+
+
+def test_readonly_sensitive_blocks_hard_without_override():
+    """Signed thinking cannot be rewritten: anything the lane would mask or block stops it (I1)."""
+    key = "sk-" + "ant-" + "A" * 24
+    for text in (f"plan {CUI}", "ssh db.example.mil", f"use {key}", "x\nSECRET//NOFORN\ny"):
+        pipe, store = make()
+        d = pipe.evaluate(ro_view("hello", ro=[text]))
+        assert not d.forward, text
+        assert [b.rule_id for b in d.blocked] == ["history.thinking_sensitive"], text
+        b = d.blocked[0]
+        assert b.action == Action.BLOCK_HARD and b.override_id is None
+        assert b.location == "messages[1].content[0].thinking"
+        assert "start a fresh session" in b.excerpt
+        assert "db.example.mil" not in b.excerpt and key not in b.excerpt
+        assert d.replacements == {} and store._pending == {}
+        assert d.hit_counts["history.thinking_sensitive"] == 1
+    assert len(pipe._smap) == 0  # nothing was pseudonymized from read-only text
+
+
+def test_readonly_clean_or_allowed_forwards_untouched():
+    pipe, _ = make()
+    d = pipe.evaluate(ro_view("hello", ro=["Plan: read the log."]))
+    assert d.forward and d.replacements == {}
+    # Approved lane: CUI markings and identifiers are allowed, so the thinking passes.
+    d = make(Trust.APPROVED)[0].evaluate(ro_view("hi", ro=[f"{CUI} on db.example.mil"]))
+    assert d.forward and d.replacements == {}
+    # Secrets are pseudonymized on every lane, so they still block.
+    key = "sk-" + "ant-" + "A" * 24
+    d = make(Trust.LOCAL)[0].evaluate(ro_view("hi", ro=[f"key {key}"]))
+    assert [b.rule_id for b in d.blocked] == ["history.thinking_sensitive"]

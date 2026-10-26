@@ -235,3 +235,59 @@ def test_fake_upstream_helpers_are_well_formed():
         assert ctype == "application/json" and json.loads(body)
         ctype, body = text_response(fmt, True)
         assert ctype == "text/event-stream" and b"data:" in body
+
+
+SIG = "c2lnLXN5bnRoZXRpYw=="  # synthetic signature / encrypted payload
+
+
+def signed_history(fmt, where, text, stream):
+    """History whose model reasoning carries `text`: thinking, redacted_thinking or reasoning summary."""
+    if fmt == "anthropic":
+        block = (
+            {"type": "thinking", "thinking": text, "signature": SIG}
+            if where == "thinking"
+            else {"type": "redacted_thinking", "data": text}
+        )
+        return {"model": "m", "max_tokens": 64, "stream": stream, "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": [block, {"type": "text", "text": "done"}]},
+            {"role": "user", "content": "continue"},
+        ]}  # fmt: skip
+    item = {"type": "reasoning", "id": "rs_1", "encrypted_content": SIG,
+            "summary": [{"type": "summary_text", "text": text}]}  # fmt: skip
+    return {"model": "m", "stream": stream, "input": [
+        {"role": "user", "content": "go"}, item,
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]},
+        {"role": "user", "content": "continue"},
+    ]}  # fmt: skip
+
+
+SIGNED = [("anthropic", "thinking"), ("anthropic", "redacted_thinking"), ("openai-responses", "reasoning")]
+
+
+@pytest.mark.parametrize("fmt,where", SIGNED)
+@pytest.mark.parametrize("stream", STREAMS)
+@pytest.mark.parametrize("kind", list(CANARIES))
+def test_no_canary_in_model_reasoning_reaches_public(gateways, upstream, fmt, where, stream, kind):
+    """Signed reasoning cannot be rewritten, so any sensitive canary in it blocks the request (I1)."""
+    gw = gateways("public")
+    resp = send(gw, fmt, signed_history(fmt, where, carrier(kind), stream))
+    assert upstream.records == [], f"forwarded: {fmt}/{where}/{kind}"
+    assert resp.status_code >= 400
+    assert "history.thinking_sensitive" in resp.text
+    assert CANARIES[kind] not in resp.text
+
+
+@pytest.mark.parametrize("fmt,where", SIGNED)
+@pytest.mark.parametrize("stream", STREAMS)
+def test_clean_model_reasoning_forwarded_byte_identical(gateways, upstream, fmt, where, stream):
+    gw = gateways("public")
+    body = signed_history(fmt, where, "Plan: read the log, then summarize.", stream)
+    resp = send(gw, fmt, body)
+    assert resp.status_code == 200
+    (rec,) = upstream.records
+    sent = json.loads(rec.body)
+    if fmt == "anthropic":
+        assert sent["messages"][1]["content"][0] == body["messages"][1]["content"][0]
+    else:
+        assert sent["input"][1] == body["input"][1]

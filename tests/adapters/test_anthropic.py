@@ -302,3 +302,18 @@ def test_tool_input_keys_not_rehydrated():
     out_evs = [o for ev in evs for o in rw.feed(ev)]
     full = next(p for p in payloads(out_evs) if p["type"] == "content_block_delta")
     assert json.loads(full["delta"]["partial_json"]) == {"host-01.cg.invalid": "db.example.mil"}
+
+
+def test_thinking_text_scanned_read_only():
+    """Thinking and redacted_thinking text is exposed read-only, never as a rewritable segment (I1)."""
+    body = load("anthropic_request.json")
+    view = AD.extract(body)
+    ro = [(s.location, s.text) for s in view.readonly]
+    assert ro == [
+        ("messages[1].content[0].thinking", "Plan: read the log."),
+        ("messages[1].content[1].data", "cmVkYWN0ZWQ="),
+    ]
+    assert [s.index for s in view.readonly] == [0, 1]
+    bad = {"model": "m", "messages": [{"role": "assistant", "content": [
+        {"type": "thinking", "signature": "c2ln"}, {"type": "redacted_thinking", "data": 5}]}]}  # fmt: skip
+    assert AD.extract(bad).unparseable == ["messages[0].content[0].thinking", "messages[0].content[1].data"]

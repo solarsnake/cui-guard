@@ -25,7 +25,8 @@ _KNOWN_TYPES = frozenset(
         "search_result",
     }
 )
-_PASSTHROUGH = frozenset({"thinking", "redacted_thinking"})
+# Signed blocks: their text is scanned read-only and never rewritten.
+_PASSTHROUGH = {"thinking": "thinking", "redacted_thinking": "data"}
 _TOOL_BLOCKS = frozenset({"tool_use", "server_tool_use"})
 _UNTOUCHED_KEYS = frozenset({"model", "max_tokens", "stream", "temperature", "top_p", "top_k", "thinking"})
 _HANDLED_KEYS = frozenset({"system", "messages", "tools", "mcp_servers"})
@@ -47,6 +48,7 @@ class _Walker:
         self.segments: list[Segment] = []
         self.opaque: list[Opaque] = []
         self.unparseable: list[str] = []
+        self.readonly: list[Segment] = []
 
     # -- primitives -------------------------------------------------------
     def _seg(self, loc: str, holder: Any, key: Any) -> None:
@@ -58,6 +60,14 @@ class _Walker:
         self.segments.append(Segment(idx, loc, text))
         if self.decision is not None and idx in self.decision.replacements:
             holder[key] = self.decision.replacements[idx]
+
+    def _ro(self, loc: str, holder: Any, key: Any) -> None:
+        """Record text for scanning only; it is never replaced."""
+        text = holder.get(key) if isinstance(holder, dict) else None
+        if not isinstance(text, str):
+            self.unparseable.append(loc)
+            return
+        self.readonly.append(Segment(len(self.readonly), loc, text))
 
     def _opq(self, loc: str, kind: str) -> bool:
         """Record an opaque item; True when it must be replaced."""
@@ -115,6 +125,8 @@ class _Walker:
             self.unparseable.append(loc)
             return
         if t in _PASSTHROUGH:
+            text_key = _PASSTHROUGH[t]
+            self._ro(f"{loc}.{text_key}", b, text_key)
             return
         if t == "document":
             self._document(loc, holder, i, b)
@@ -376,7 +388,7 @@ class AnthropicAdapter:
     def extract(self, body: dict) -> RequestView:
         w = _Walker()
         w.walk(body)
-        return RequestView(w.segments, w.opaque, w.unparseable)
+        return RequestView(w.segments, w.opaque, w.unparseable, w.readonly)
 
     def apply(self, body: dict, decision: Decision) -> dict:
         new = copy.deepcopy(body)

@@ -281,3 +281,23 @@ def test_function_call_argument_keys_not_rehydrated():
     resp = {"output": [{"type": "function_call", "arguments": json.dumps({ph: "x", "h": ph})}]}
     out = AD.rehydrate_response(resp, smap)
     assert json.loads(out["output"][0]["arguments"]) == {ph: "x", "h": "db.example.mil"}
+
+
+def test_reasoning_summary_scanned_read_only():
+    """Reasoning summary text is exposed read-only; the item itself is never modified (I1)."""
+    body = load()
+    view = AD.extract(body)
+    ro = [(s.location, s.text) for s in view.readonly]
+    assert ro == [(f"input[{i}].summary[0].text", "Plan: secret") for i, it in enumerate(body["input"])
+                  if isinstance(it, dict) and it.get("type") == "reasoning"]  # fmt: skip
+    assert ro
+    assert "Plan: secret" not in {s.text for s in view.segments}
+    out = AD.apply(body, Decision(replacements={s.index: "X" for s in view.segments}))
+    for a, b in zip(body["input"], out["input"], strict=True):
+        if isinstance(a, dict) and a.get("type") == "reasoning":
+            assert json.dumps(a) == json.dumps(b)
+    bad = {"model": "m", "input": [{"type": "reasoning", "summary": "x"},
+                                   {"type": "reasoning", "summary": [{"text": 3}]},
+                                   {"type": "reasoning", "encrypted_content": "c2ln"}]}  # fmt: skip
+    v = AD.extract(bad)
+    assert v.unparseable == ["input[0].summary", "input[1].summary[0].text"] and v.readonly == []

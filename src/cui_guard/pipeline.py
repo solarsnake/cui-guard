@@ -17,6 +17,11 @@ EXCERPT_CHARS = 120
 _UNCHANGED_MAX = 20000
 MASK = "█"
 _ALWAYS_BLOCKED_OPAQUE = frozenset({"server_tool", "url_source", "encrypted"})
+THINKING_RULE = "history.thinking_sensitive"
+THINKING_MESSAGE = (
+    "the conversation history holds sensitive model reasoning (thinking) that cannot be "
+    "rewritten without breaking its signatures; start a fresh session"
+)
 _EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cui-guard-detect")
 
 
@@ -39,6 +44,8 @@ class RequestView:
     segments: list[Segment]
     opaque: list[Opaque]
     unparseable: list[str]  # locations of unknown types
+    # Scanned but never rewritten (signed thinking, reasoning summaries).
+    readonly: list[Segment] = field(default_factory=list)
 
 
 @dataclass
@@ -107,9 +114,11 @@ class Pipeline:
         try:
             # The worker runs pure detection only; every decision and mutation
             # happens here, so a timed-out worker can change nothing.
-            future = _EXECUTOR.submit(self._scan_all, [s.text for s in view.segments])
+            texts = [s.text for s in view.segments] + [s.text for s in view.readonly]
+            future = _EXECUTOR.submit(self._scan_all, texts)
             all_hits = future.result(timeout=self._timeout_s)
-            return self._evaluate(view, all_hits)
+            n = len(view.segments)
+            return self._evaluate(view, all_hits[:n], all_hits[n:])
         except Exception as e:  # noqa: BLE001 - fail closed on anything, incl. timeout
             return self._internal_error(type(e).__name__)
 
@@ -124,13 +133,17 @@ class Pipeline:
     def _scan_all(self, texts: list[str]) -> list[list[Hit]]:
         return [self._detector.scan(t) for t in texts]
 
-    def _evaluate(self, view: RequestView, all_hits: list[list[Hit]]) -> Decision:
+    def _evaluate(
+        self, view: RequestView, all_hits: list[list[Hit]], ro_hits: list[list[Hit]]
+    ) -> Decision:
         d = Decision()
         for loc in view.unparseable:
             self._add_block(d, "unparseable", DetClass.UNPARSEABLE, Action.BLOCK_HARD,
                             loc, "unknown content type", _sha256(loc))  # fmt: skip
         for seg, hits in zip(view.segments, all_hits, strict=True):
             self._segment(d, seg, hits)
+        for seg, hits in zip(view.readonly, ro_hits, strict=True):
+            self._readonly(d, seg, hits)
         for op in view.opaque:
             self._opaque(d, op)
         return d
@@ -184,6 +197,15 @@ class Pipeline:
                 if len(self._unchanged) >= _UNCHANGED_MAX:
                     self._unchanged.clear()
                 self._unchanged.add(key)
+
+    def _readonly(self, d: Decision, seg: Segment, hits: list[Hit]) -> None:
+        """Text that cannot be rewritten: anything the lane would mask or block stops the request."""
+        for hit in hits:
+            if self._policy.action_for(hit, self._trust) >= Action.PSEUDONYMIZE:
+                self._add_block(d, THINKING_RULE, hit.cls, Action.BLOCK_HARD, seg.location,
+                                f"{THINKING_MESSAGE} (matched {hit.rule_id})",
+                                _sha256(seg.text))  # fmt: skip
+                return
 
     def _opaque(self, d: Decision, op: Opaque) -> None:
         forced = op.kind in _ALWAYS_BLOCKED_OPAQUE and self._trust != Trust.LOCAL

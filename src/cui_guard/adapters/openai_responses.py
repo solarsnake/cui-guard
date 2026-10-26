@@ -28,7 +28,7 @@ _SERVER_ITEMS = frozenset(
         "mcp_approval_request", "mcp_approval_response",
     }
 )  # fmt: skip
-_PASSTHROUGH_ITEMS = frozenset({"reasoning", "item_reference"})
+_PASSTHROUGH_ITEMS = frozenset({"item_reference"})
 _ANNOTATION_SKIP = frozenset(
     {"type", "url", "file_id", "container_id", "index", "start_index", "end_index"}
 )
@@ -118,6 +118,9 @@ class OpenAIWalker(_Walker):
             t = "message"
         if t in _PASSTHROUGH_ITEMS:
             return
+        if t == "reasoning":
+            self._reasoning(loc, it)
+            return
         if t in _SERVER_ITEMS:
             if self._opq(loc, "server_tool"):
                 items[i] = {
@@ -154,6 +157,17 @@ class OpenAIWalker(_Walker):
                 self._leaves(f"{loc}.output", it, "output", _OUTCOME_SKIP)
         else:
             self.unparseable.append(loc)
+
+    def _reasoning(self, loc: str, it: dict) -> None:
+        """Reasoning items are never modified; their summary text is scanned read-only."""
+        summary = it.get("summary")
+        if summary is None:
+            return
+        if not isinstance(summary, list):
+            self.unparseable.append(f"{loc}.summary")
+            return
+        for j, part in enumerate(summary):
+            self._ro(f"{loc}.summary[{j}].text", part, "text")
 
     def _tools(self, tools: Any) -> None:
         if not isinstance(tools, list):
@@ -403,7 +417,7 @@ class OpenAIResponsesAdapter:
     def extract(self, body: dict) -> RequestView:
         w = OpenAIWalker()
         w.walk(body)
-        return RequestView(w.segments, w.opaque, w.unparseable)
+        return RequestView(w.segments, w.opaque, w.unparseable, w.readonly)
 
     def apply(self, body: dict, decision: Decision) -> dict:
         new = copy.deepcopy(body)
