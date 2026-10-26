@@ -222,7 +222,8 @@ def _rehydrate_tree(obj: Any, smap: SessionMap) -> Any:
     if isinstance(obj, list):
         return [_rehydrate_tree(v, smap) for v in obj]
     if isinstance(obj, dict):
-        return {smap.rehydrate(k): _rehydrate_tree(v, smap) for k, v in obj.items()}
+        # Keys are never scanned outbound, so they are never rehydrated.
+        return {k: _rehydrate_tree(v, smap) for k, v in obj.items()}
     return obj
 
 

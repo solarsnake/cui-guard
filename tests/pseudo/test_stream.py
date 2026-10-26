@@ -46,10 +46,13 @@ def test_rehydrate_json_escapes_real_value():
     assert json.loads(text)["cmd"] == "echo " + real
 
 
-def test_rehydrate_json_keys_and_invalid():
+def test_rehydrate_json_values_not_keys_and_invalid():
+    """Keys are never scanned outbound, so they are never rehydrated inbound (I2)."""
     m = make_map()
     text = rehydrate_json_text('{"host-01.cg.invalid":["CGTKT-1",3]}', m)
-    assert json.loads(text) == {"db.example.mil": ["PROJ-9", 3]}
+    assert json.loads(text) == {"host-01.cg.invalid": ["PROJ-9", 3]}
+    text = rehydrate_json_text('{"host-01.cg.invalid":"x","a":{"CGTKT-1":"host-01.cg.invalid"}}', m)
+    assert json.loads(text) == {"host-01.cg.invalid": "x", "a": {"CGTKT-1": "db.example.mil"}}
     with pytest.raises(ValueError):
         rehydrate_json_text("{bad", m)
 

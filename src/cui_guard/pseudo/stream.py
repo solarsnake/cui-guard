@@ -101,12 +101,13 @@ def _walk(obj: Any, smap: SessionMap) -> Any:
     if isinstance(obj, list):
         return [_walk(v, smap) for v in obj]
     if isinstance(obj, dict):
-        return {smap.rehydrate(k): _walk(v, smap) for k, v in obj.items()}
+        # Keys are never scanned outbound, so they are never rehydrated.
+        return {k: _walk(v, smap) for k, v in obj.items()}
     return obj
 
 
 def rehydrate_json_text(json_text: str, smap: SessionMap) -> str:
-    """Rehydrate every string value and key of a JSON document; raises ValueError if invalid."""
+    """Rehydrate every string value (never keys) of a JSON document; raises ValueError if invalid."""
     obj = json.loads(json_text)  # JSONDecodeError is a ValueError
     return json.dumps(_walk(obj, smap), ensure_ascii=False, separators=(",", ":"))
 

@@ -282,3 +282,23 @@ def test_finish_reports_incomplete_tool_blocks():
         assert rw.feed(ev) == ([ev] if ev.event == "content_block_start" else [])
     assert rw.finish() == []
     assert rw.notes == ["incomplete_tool_blocks=1"]
+
+
+def test_tool_input_keys_not_rehydrated():
+    """Keys are never scanned outbound, so the agent gets placeholder keys back unchanged (I2)."""
+    resp = {"content": [{"type": "tool_use", "id": "t", "name": "run",
+                         "input": {"host-01.cg.invalid": "x", "v": {"CG_PERSON_01": "host-01.cg.invalid"}}}]}  # fmt: skip
+    out = AD.rehydrate_response(resp, make_map())
+    assert out["content"][0]["input"] == {"host-01.cg.invalid": "x", "v": {"CG_PERSON_01": "db.example.mil"}}
+    args = json.dumps({"host-01.cg.invalid": "host-01.cg.invalid"})
+    evs = [
+        SSEEvent("content_block_start", json.dumps({"type": "content_block_start", "index": 0,
+                 "content_block": {"type": "tool_use", "id": "t", "name": "run", "input": {}}})),
+        SSEEvent("content_block_delta", json.dumps({"type": "content_block_delta", "index": 0,
+                 "delta": {"type": "input_json_delta", "partial_json": args}})),
+        SSEEvent("content_block_stop", json.dumps({"type": "content_block_stop", "index": 0})),
+    ]  # fmt: skip
+    rw = AD.stream_rewriter(make_map())
+    out_evs = [o for ev in evs for o in rw.feed(ev)]
+    full = next(p for p in payloads(out_evs) if p["type"] == "content_block_delta")
+    assert json.loads(full["delta"]["partial_json"]) == {"host-01.cg.invalid": "db.example.mil"}

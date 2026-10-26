@@ -272,3 +272,12 @@ def test_stream_refusal_and_annotation_and_failed():
     assert types[-2:] == ["response.output_text.delta", "response.failed"]  # held text flushed before failed
     assert out[-1]["response"]["output"][0]["content"][0]["text"] == "db.example.mil"
     assert not rw.pending
+
+
+def test_function_call_argument_keys_not_rehydrated():
+    """Keys are never scanned outbound, so they are never rehydrated inbound (I2)."""
+    smap = make_map()
+    ph = smap.placeholder_for("db.example.mil", "host")
+    resp = {"output": [{"type": "function_call", "arguments": json.dumps({ph: "x", "h": ph})}]}
+    out = AD.rehydrate_response(resp, smap)
+    assert json.loads(out["output"][0]["arguments"]) == {ph: "x", "h": "db.example.mil"}
