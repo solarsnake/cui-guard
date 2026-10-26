@@ -18,6 +18,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
+from cui_guard.launch import session as session_mod
 from cui_guard.launch.session import GatewaySession, prepare_policy, start_gateway
 from cui_guard.override.human import FakeChannel
 from cui_guard.policy import loader
@@ -311,7 +312,9 @@ def launch_gateway(
         for k in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
             mp.setenv(k, env[k])
         mp.setattr(loader, "org_policy_path", lambda: dirs.root / "no-org-policy.toml")
-        # approve any loosening (approved/local lanes) as the human would
-        prepare_policy(False, FakeChannel(None, auth_ok=True))
+        # A user-defined default lane is a loosening, so every launch needs approval:
+        # approve as the human would, then run the gateway headless on that approval.
+        policy = prepare_policy(False, FakeChannel(None, auth_ok=True))
+        mp.setattr(session_mod, "prepare_policy", lambda headless, channel: policy)
         session = start_gateway("generic", "fake", True, env, channel=FakeChannel(None, True))
     return Gateway(session, dirs)

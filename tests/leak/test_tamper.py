@@ -39,30 +39,32 @@ def test_user_config_loosened_by_agent_requires_auth(isolated):
     with pytest.raises(LaunchError, match="interactive approval"):
         prepare_policy(True, FakeChannel(None, auth_ok=True))  # headless never self-approves
 
-    # removing an identifier is also a loosening
+    # every later launch asks again; the prompt names what changed since the last approval
     write_user_config(isolated.config, "https://llm.example.invalid", "public")
     prepare_policy(False, FakeChannel(None, auth_ok=True))
     cfg = isolated.config / "cui-guard" / "config.toml"
     cfg.write_text(cfg.read_text().replace(CANARIES["codename"], "OTHERNAME"))
-    with pytest.raises(LaunchError, match="not approved"):
-        prepare_policy(False, FakeChannel(None, auth_ok=False))
-
-
-def test_snapshot_deleted_counts_as_loosening(isolated):
-    write_user_config(isolated.config, "http://127.0.0.1:9", "local")
-    prepare_policy(False, FakeChannel(None, auth_ok=True))
-    prepare_policy(False, FakeChannel(None, auth_ok=False))  # unchanged: no prompt needed
-    snapshot_path().unlink()
     channel = FakeChannel(None, auth_ok=False)
     with pytest.raises(LaunchError, match="not approved"):
         prepare_policy(False, channel)
-    assert channel.auth_requests
+    assert f"codename removed: {CANARIES['codename']}" in channel.auth_requests[0]
 
-    # a corrupted snapshot is treated the same way
+
+def test_snapshot_never_authorizes(isolated):
+    """Approved, deleted, corrupted or forged: the snapshot never stands in for OS auth (I3/I4)."""
+    write_user_config(isolated.config, "http://127.0.0.1:9", "local")
     prepare_policy(False, FakeChannel(None, auth_ok=True))
-    snapshot_path().write_text("{ not json")
     with pytest.raises(LaunchError, match="not approved"):
-        prepare_policy(False, FakeChannel(None, auth_ok=False))
+        prepare_policy(False, FakeChannel(None, auth_ok=False))  # unchanged still asks
+    for tamper in (lambda: snapshot_path().unlink(), lambda: snapshot_path().write_text("{ not json")):
+        prepare_policy(False, FakeChannel(None, auth_ok=True))
+        tamper()
+        channel = FakeChannel(None, auth_ok=False)
+        with pytest.raises(LaunchError, match="not approved"):
+            prepare_policy(False, channel)
+        assert channel.auth_requests
+    with pytest.raises(LaunchError, match="interactive approval"):
+        prepare_policy(True, FakeChannel(None, auth_ok=True))
 
 
 @pytest.mark.parametrize("fmt", list(PATHS))

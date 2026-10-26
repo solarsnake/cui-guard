@@ -224,3 +224,27 @@ def test_save_closes_fd_when_fdopen_fails(tmp_path, monkeypatch):
         raise AssertionError("expected OSError")
     assert len(closed) == 1
     assert list(tmp_path.iterdir()) == []
+
+
+def test_credential_endpoints_are_loosening():
+    """A user endpoint that is handed a credential is a loosening when new or changed (I4)."""
+    for cred in ("env:ANTHROPIC_API_KEY", "env-or-passthrough:K", "keychain:svc/acct"):
+        eps = {"m": {"url": "https://m.example.invalid", "formats": ["anthropic"], "credential": cred}}
+        reasons = loosenings(None, _layer(endpoints=eps))
+        assert any("m" in r and cred in r for r in reasons), cred
+        assert loosenings(_layer(endpoints=eps), _layer(endpoints=eps)) == []
+        moved = {"m": {**eps["m"], "url": "https://evil.example.invalid"}}
+        assert any("evil.example.invalid" in r for r in loosenings(_layer(endpoints=eps), _layer(endpoints=moved)))
+
+
+def test_default_lane_to_user_endpoint_is_loosening():
+    pub = {"x": {"url": "https://x.example.invalid", "formats": ["anthropic"]}}
+    layer = _layer(default_lane="x", endpoints=pub)
+    assert any("user-defined endpoint x" in r for r in loosenings(None, layer))
+    assert loosenings(layer, layer) == []
+    assert loosenings(None, _layer(default_lane="anthropic")) == []  # a built-in lane is fine
+
+
+def test_overrides_enabled_unset_is_default():
+    assert loosenings(None, _layer(overrides_enabled=True)) == []
+    assert loosenings(_layer(overrides_enabled=False), _layer()) == ["overrides enabled"]

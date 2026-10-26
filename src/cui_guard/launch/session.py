@@ -129,7 +129,7 @@ def resolve_credential(ep: Endpoint, env: Mapping[str, str]) -> tuple[CredMode, 
 
 
 def prepare_policy(headless: bool, channel) -> EffectivePolicy:
-    """Load the policy; require human approval for settings looser than the last approved."""
+    """Load the policy; a loosening user config needs human approval at every launch."""
     try:
         policy, user_layer = load_effective_policy()
     except PolicyError as e:
@@ -141,13 +141,21 @@ def prepare_policy(headless: bool, channel) -> EffectivePolicy:
             f"cui-guard {__version__} is older than the organization minimum "
             f"{policy.min_version}"
         )
+    # The user config is agent-writable, so any loosening it holds needs OS
+    # authentication at every launch. The snapshot never authorizes anything;
+    # it only tells the human what changed since they last approved.
     snap = snapshot_path()
-    reasons = loosenings(load_snapshot(snap), user_layer)
+    reasons = loosenings(None, user_layer)
     if reasons:
         listing = "; ".join(reasons)
         if headless:
             raise LaunchError(f"loosened settings need interactive approval: {listing}")
-        if not channel.authenticate(f"cui-guard: approve loosened settings: {listing}"):
+        prompt = f"cui-guard: approve loosened settings: {listing}"
+        previous = load_snapshot(snap)
+        changed = loosenings(previous, user_layer) if previous is not None else []
+        if changed:
+            prompt = f"changed since your last approval: {'; '.join(changed)}. {prompt}"
+        if not channel.authenticate(prompt):
             raise LaunchError(f"loosened settings were not approved: {listing}")
     save_snapshot(snap, user_layer)
     return policy

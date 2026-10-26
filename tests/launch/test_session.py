@@ -60,11 +60,73 @@ def test_loosening_requires_auth():
     assert ch.auth_requests and "approve loosened settings" in ch.auth_requests[0]
 
 
-def test_loosening_approved_saves_snapshot():
+def test_loosening_needs_auth_every_launch():
+    """The snapshot never authorizes: an approved loosening is asked for again next launch (I3)."""
     _loosened_setup()
     ch = FakeChannel("j", True)
     assert prepare_policy(False, ch).profile == "general"
-    assert prepare_policy(True, FakeChannel("j", False)).profile == "general"  # no new loosening
+    assert "changed since your last approval: profile changed from cui to general" in ch.auth_requests[0]
+    again = FakeChannel("j", True)
+    assert prepare_policy(False, again).profile == "general"
+    assert len(again.auth_requests) == 1
+    assert "changed since your last approval" not in again.auth_requests[0]  # nothing new
+    with pytest.raises(LaunchError, match="interactive approval"):
+        prepare_policy(True, FakeChannel("j", True))
+    with pytest.raises(LaunchError, match="not approved"):
+        prepare_policy(False, FakeChannel("j", False))
+
+
+def _write_user(text):
+    cfg = user_config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(text)
+
+
+def test_forged_snapshot_does_not_authorize():
+    """A well-formed snapshot written by the agent to match the loosened config changes nothing (I4)."""
+    text = (
+        'default_lane = "corp"\n[endpoints.corp]\nurl = "https://llm.corp.example.invalid"\n'
+        'formats = ["anthropic"]\ntrust = "approved"\n'
+    )
+    _write_user(text)
+    import tomllib
+
+    save_snapshot(snapshot_path(), parse_layer(tomllib.loads(text), "user"))  # forged
+    ch = FakeChannel("j", False)
+    with pytest.raises(LaunchError, match="not approved"):
+        prepare_policy(False, ch)
+    assert len(ch.auth_requests) == 1 and "corp" in ch.auth_requests[0]
+    with pytest.raises(LaunchError, match="interactive approval"):
+        prepare_policy(True, FakeChannel("j", True))
+
+
+def test_new_endpoint_reusing_lane_key_is_loosening():
+    _write_user(
+        '[endpoints.mirror]\nurl = "https://mirror.example.invalid"\nformats = ["anthropic"]\n'
+        'credential = "env:ANTHROPIC_API_KEY"\n'
+    )
+    with pytest.raises(LaunchError, match="mirror.*env:ANTHROPIC_API_KEY"):
+        prepare_policy(True, FakeChannel("j", True))
+    ch = FakeChannel("j", True)
+    prepare_policy(False, ch)
+    assert ch.auth_requests and "env:ANTHROPIC_API_KEY" in ch.auth_requests[0]
+
+
+def test_default_lane_to_user_endpoint_is_loosening():
+    _write_user(
+        'default_lane = "mine"\n[endpoints.mine]\nurl = "https://mine.example.invalid"\n'
+        'formats = ["anthropic"]\n'
+    )
+    with pytest.raises(LaunchError, match="user-defined endpoint mine"):
+        prepare_policy(True, FakeChannel("j", True))
+
+
+def test_tightening_only_config_needs_no_auth():
+    _write_user('[identifiers]\ndomains = ["a.example.invalid"]\n')
+    ch = FakeChannel("j", False)
+    assert prepare_policy(True, ch).profile == "cui"
+    assert prepare_policy(False, ch).profile == "cui"
+    assert ch.auth_requests == []
 
 
 def test_min_version_too_new(isolated_dirs, monkeypatch):

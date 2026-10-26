@@ -22,6 +22,7 @@ from cui_guard.policy.schema import (
 )
 
 _TRUST_RANK = {Trust.PUBLIC: 0, Trust.APPROVED: 1, Trust.LOCAL: 2}
+_CREDENTIAL_PREFIXES = ("env:", "keychain:", "env-or-passthrough:")
 _ID_FIELDS = (
     ("domains", "domain"),
     ("ip_ranges", "IP range"),
@@ -33,6 +34,11 @@ _ID_FIELDS = (
 
 def _rule_sig(r) -> tuple:
     return (r.pattern.pattern, r.pattern.flags, r.cls, r.kind)
+
+
+def _sends_credential(credential: str) -> bool:
+    """True when the gateway or agent would hand a real credential to this endpoint."""
+    return credential == "passthrough" or credential.startswith(_CREDENTIAL_PREFIXES)
 
 
 def snapshot_path() -> Path:
@@ -49,7 +55,12 @@ def _lane_rank(layer: PolicyLayer, builtin: dict[str, Endpoint]) -> int:
 
 
 def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> list[str]:
-    """Human-readable reasons the current user layer is looser than the approved one."""
+    """Human-readable reasons `current` is looser than `previous`.
+
+    With `previous=None` the baseline is "no user config": this is what decides
+    whether a launch needs OS authentication. Against the snapshot it only
+    describes what changed since the last approval.
+    """
     prev = previous or PolicyLayer(source="user")
     cur = current or PolicyLayer(source="user")
     reasons: list[str] = []
@@ -96,6 +107,19 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
         elif old_ep != ep:
             reasons.append(f"endpoint {name} changed (trust {ep.trust.value})")
 
+    for name, ep in sorted((cur.endpoints or {}).items()):
+        if _sends_credential(ep.credential) and prev_eps.get(name) != ep:
+            reasons.append(
+                f"endpoint {name} ({ep.url}) is given credential {ep.credential}"
+            )
+
+    cur_eps = cur.endpoints or {}
+    lane = cur.default_lane
+    if lane is not None and lane in cur_eps and (
+        prev.default_lane != lane or prev_eps.get(lane) != cur_eps[lane]
+    ):
+        reasons.append(f"default lane set to user-defined endpoint {lane}")
+
     builtin = load_builtin_layer().endpoints or {}
     if cur.default_lane is not None and _lane_rank(cur, builtin) > _lane_rank(
         prev, builtin
@@ -104,7 +128,8 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
             f"default lane moved to higher-trust endpoint {cur.default_lane}"
         )
 
-    if not prev.overrides_enabled and cur.overrides_enabled:
+    # Unset means the built-in default (enabled), so only an explicit "false" can be loosened.
+    if prev.overrides_enabled is False and cur.overrides_enabled is not False:
         reasons.append("overrides enabled")
 
     for rule_id in sorted(
