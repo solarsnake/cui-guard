@@ -525,7 +525,11 @@ def create_app(
                 if nxt is not None:
                     nxt.cancel()
                 leftover = _leftover_from_notes(rewriter.notes)
-                if not await arecord(decision, request_hash, leftover):
+                try:
+                    recorded = await arecord(decision, request_hash, leftover)
+                except Exception:  # noqa: BLE001 - never skip closing upstream or the notices
+                    recorded = False
+                if not recorded:
                     audit_failed_late()
                 await resp.aclose()
                 notify_leftover(leftover)

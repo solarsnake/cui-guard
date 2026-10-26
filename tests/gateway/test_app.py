@@ -442,3 +442,38 @@ async def test_chat_stream_end_to_end(tmp_path):
     assert evs[-1].data == "[DONE]"
     text = "".join(json.loads(e.data)["choices"][0]["delta"].get("content", "") for e in evs[:-1])
     assert text == f"host {HOST} up"
+
+
+async def test_late_audit_unexpected_error_still_closes_and_notifies(tmp_path, monkeypatch, capsys):
+    """Any audit error after streaming still closes upstream and sends leftover notices (M13)."""
+    from cui_guard import audit as audit_mod
+    from cui_guard.override.human import FakeChannel
+
+    closed = []
+
+    def handler(req):
+        resp = stream_handler(lambda ph: ["a ", ph, " and CG_PERSON_99"])(req)
+        real = resp.aclose
+
+        async def aclose():
+            closed.append(1)
+            await real()
+
+        resp.aclose = aclose
+        return resp
+
+    def boom(*a, **k):
+        raise RuntimeError("disk on fire")
+
+    ch = FakeChannel(None, False)
+    async with client(make_cfg(tmp_path), Upstream(handler), channel=ch) as c:
+        monkeypatch.setattr(audit_mod.AuditLog, "record", boom)
+        r = await c.post("/v1/messages", json=msg(f"ping {HOST}", stream=True), headers=H)
+        for _ in range(100):
+            if len(ch.notifications) >= 2:
+                break
+            await asyncio.sleep(0.01)
+    assert r.status_code == 200
+    assert "audit record could not be written" in capsys.readouterr().err
+    assert closed
+    assert sorted(b.rule_id for b, _ in ch.notifications) == ["audit.unavailable", "placeholder.leftover"]
