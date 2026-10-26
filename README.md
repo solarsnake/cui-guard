@@ -7,7 +7,7 @@
 ```
 pipx install cui-guard
 pipx install "cui-guard[ner]"     # optional: name detection (Presidio, spaCy)
-pipx install "cui-guard[macos]"   # optional: Touch ID prompts for overrides
+pipx install "cui-guard[macos]"   # macOS: Touch ID / password prompts for overrides and approvals
 ```
 
 Supported platforms: macOS and Linux (including WSL2). Python 3.11 or newer.
@@ -25,6 +25,8 @@ cui-guard policy                  # effective policy and where each setting came
 ```
 
 The launcher starts a gateway on `127.0.0.1` (random port, per-session token), points the agent at it, and shuts it down when the agent exits.
+
+The launchers accept `--profile`, but only `cui` is honored, and in v1 it is a no-op: the session uses the profile from your policy layers. Any other value is ignored with a warning.
 
 ## Lanes and trust
 
@@ -48,11 +50,11 @@ Profile `cui` is the default. Profile `general` additionally allows controlled-c
 2. User config at `~/.config/cui-guard/config.toml` (lanes, identifiers, extra patterns, actions).
 3. Organization policy (`/etc/cui-guard/policy.toml`, or `/Library/Application Support/cui-guard/policy.toml` on macOS), which can lock lanes and profile, disable overrides, set a minimum version and ship an audit sink.
 
-There is no project-level layer. If the user config becomes looser than the last version a human approved (for example a higher-trust lane, a removed identifier or a lowered action), the next launch asks for OS authentication before continuing.
+There is no project-level layer. The user config can be edited by the agent, so whenever it loosens the built-in defaults (for example a higher-trust lane, the `general` profile, a lane that is given a credential, or a default lane you defined yourself), every launch asks for OS authentication before continuing, and `--headless` launches are refused. The prompt also lists what changed since your last approval. See [docs/LIMITS.md](docs/LIMITS.md).
 
 ## Overrides
 
-A blocked request can sometimes be overridden by a person at the keyboard: the gateway shows an on-screen warning, asks for a typed justification, and requires OS authentication (Touch ID or password on macOS, polkit or a terminal prompt on Linux). There is no CLI command and no HTTP route that grants an override, so the agent cannot approve its own. Classified markings and unparseable content cannot be overridden. Organizations can disable overrides entirely. Each override is written to the audit log with its justification.
+A blocked request can sometimes be overridden by a person at the keyboard: the gateway shows an on-screen warning, asks for a typed justification, and requires OS authentication (Touch ID or password on macOS, which needs the `[macos]` extra; on Linux a zenity or kdialog dialog for the justification and `pkexec` for authentication, with no terminal prompt). There is no CLI command and no HTTP route that grants an override, so the agent cannot approve its own. Classified markings and unparseable content cannot be overridden. Organizations can disable overrides entirely. Each override is written to the audit log with its justification.
 
 ## Credential modes
 
@@ -62,7 +64,7 @@ A blocked request can sometimes be overridden by a person at the keyboard: the g
 
 ## Audit log
 
-One JSON line per request in `~/.local/state/cui-guard/audit.jsonl`: rule IDs, counts, placeholder IDs and hashes. It never contains matched values or raw content. Organizations can add a syslog or file sink.
+One JSON line per request in `~/.local/state/cui-guard/audit.jsonl`: rule IDs, counts and hashes (plus override justifications). It never contains matched values, placeholder IDs or raw content. The local file is always written; organizations can add a syslog sink, the only other sink in v1.
 
 ## What this is not
 
@@ -71,7 +73,7 @@ cui-guard does not make CUI safe to send to a public LLM.
 - It is not a tool for classified information. It refuses classified markings and does nothing else with them.
 - It does not decide what is or is not CUI, and never says that something "is not CUI". It reports that a rule matched.
 - It does not replace your organization's authorization, FedRAMP or CMMC processes.
-- It cannot stop a determined user with administrator rights on their own machine. It protects honest people from mistakes, and agents from prompt injection.
+- It cannot stop a determined user with administrator rights on their own machine. It protects honest people from mistakes, and it limits what a prompt-injected agent can send through the gateway. It does not contain the agent: an agent running as you with a shell can still read or kill local processes, including the gateway (see [docs/LIMITS.md](docs/LIMITS.md)).
 - It is not a guarantee. Detection is heuristic; read [docs/LIMITS.md](docs/LIMITS.md) before relying on it.
 - It makes no statement about whether any LLM use is permitted for your data. That is a decision for you and your organization.
 

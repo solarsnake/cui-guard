@@ -21,6 +21,7 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **Consumer-plan data use.** Conversations on consumer plans may be used for model training under the provider's data-use terms. Check your plan settings before using passthrough with a consumer login.
 - **A keyring-stored Codex ChatGPT login cannot be detected.** The launcher refuses when it finds a ChatGPT login in Codex's file store, but it cannot see one kept in the OS keyring.
 - **Background agents cannot reach the gateway.** The session token is passed through the environment only and is never written to disk, so Claude Code background agents that do not inherit the shell environment get a 401 (the request fails closed). They are unusable under cui-guard in v1.
+- **Other vendor keys may stay in the agent's environment.** The Claude launcher removes the lane's key variable, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and the known provider-switch variables (Bedrock, Vertex, Foundry and similar), but other vendor keys such as `OPENAI_API_KEY` can remain in the agent's environment and are readable by the agent.
 - **Organization pinning needs a fixed-port gateway.** The emitted Claude Code managed settings pin a fixed gateway URL, but v1 gateways use a random per-session port. Organizations cannot yet use provider pinning with the v1 launcher; this is planned for phase 2. Codex has no provider allowlist in its requirements file, so for Codex the provider can only be pinned by using the cui-guard launcher.
 
 ## Detection quirks
@@ -30,6 +31,8 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **Line-ending normalization.** For detection only, Windows line endings (CRLF) are normalized before scanning. This does not change the text that is forwarded.
 - **Tool schema property names are not scanned.** Descriptions and values in a tool's input schema are scanned, but the property names themselves are not. A sensitive word used as a property name can reach the upstream.
 - **Streaming hold-back gap.** If a provider starts a text block with non-empty text in its opening event (the API normally sends an empty string), that first text bypasses the hold-back that rejoins split placeholders.
+- **Newer Anthropic block types hard-block.** Content block types the adapter does not know yet (for example `tool_reference`) are treated as unparseable and hard-block the request until they are supported.
+- **Sensitive model reasoning ends the session.** Thinking, redacted-thinking and reasoning-summary text is scanned but cannot be rewritten without breaking its signature. If it holds anything the lane would mask or block, every request carrying that history hard-blocks (`history.thinking_sensitive`); start a fresh session.
 - **Echoed response fields.** Top-level response fields that echo your request (such as `instructions`) are not restored from placeholders. This is cosmetic.
 - **Settings-file credentials.** An `ANTHROPIC_API_KEY` or auth token set in a Claude settings file is not flagged by the launcher. Traffic still goes through the gateway, because the launcher's own settings take precedence for the base URL.
 - **`cui-guard policy` view.** The default view does not show which layer each individual identifier literal came from. Use `--show-identifiers` only when it is safe to print them.
@@ -40,6 +43,14 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **Agent transcripts stay on disk.** Claude Code and Codex write full conversation transcripts to the user's disk (for example under `~/.claude`). These hold the real values from before pseudonymization. cui-guard does not manage or encrypt them. The guard's own session map is kept in memory only.
 - **The audit log holds no matched values**, but it records rule IDs, counts, hashes and override justifications. Written justifications are typed by a person, so do not put sensitive details in them.
 - **UDP syslog delivery cannot be confirmed.** If an organization sink uses UDP, the guard cannot tell whether a record arrived.
+
+## Approvals, overrides and the local user
+
+- **The user config needs OS authentication at every launch when it loosens.** The user config and the approval snapshot live in directories the agent can write. The snapshot therefore never authorizes anything: whenever the user config loosens the built-in defaults (a higher-trust lane, the `general` profile, a lane given a credential, a default lane defined in the user config, enabled overrides, a moved audit log), every launch asks for OS authentication, and `--headless` launches are refused. The snapshot only lets the prompt say what changed since your last approval.
+- **Same-user processes are not contained.** Any process running as you, including an agent with a shell, can read the gateway's memory (session map, upstream key in gateway mode) or kill the gateway. Killing it fails closed (the agent loses its endpoint), but cui-guard does not protect its own process from you or your agent.
+- **Claude deny rules cover file-editing tools, not the shell.** The Claude launcher adds `Edit(//<path>/**)` deny rules for the cui-guard config and state directories (`//` anchors at the filesystem root). They stop Claude Code's built-in file-editing tools from writing there. Writes through the Bash tool (`echo >`, `sed -i`, and so on) are not covered.
+- **Linux overrides and approvals need admin rights and a polkit agent.** Authentication uses `pkexec`, which needs an account allowed to authenticate as an administrator and a running polkit authentication agent. WSL2 and headless SSH sessions usually have no polkit agent, so overrides and loosened launches are refused there.
+- **macOS overrides and approvals need the `[macos]` extra.** Touch ID / password prompts use `pyobjc-framework-LocalAuthentication`. Without `pipx install "cui-guard[macos]"`, overrides are unavailable and launches that need approval are refused.
 
 ## Availability and robustness
 
@@ -69,4 +80,4 @@ The release gate is the canary suite in `tests/leak` (real gateway process, real
 | The same with a user `~/.claude/settings.json` in an isolated temporary `HOME` | Not verified: an isolated `HOME` hides the macOS login keychain, so Claude Code could not log in. The project-level result above is the closest check. |
 | Codex routing, and whether a custom provider bypasses a stored ChatGPT login | Not run: `codex` is not installed on the test machine. The Task 15 refusal remains in place and spec section 13 is unchanged. |
 
-Also seen during the Claude run: Claude Code warns that the `Write(...)` deny rules the launcher puts in its settings file "are not matched by file permission checks" and that only `Edit(path)` rules apply. The `Edit(...)` rules are present, so the protection is in effect; the warning is noise.
+Also seen during the Claude run: Claude Code warned that the `Write(...)` deny rules the launcher then put in its settings file "are not matched by file permission checks" and that only `Edit(path)` rules apply. The launcher now emits only `Edit(//<absolute path>/**)` rules. The earlier rules used a single leading slash, which Claude Code reads as relative to the settings file, so they did not protect the intended directories. The real-agent runs above predate this change, and also predate the rule that a loosened user config needs OS authentication at every launch. The smoke tests write a user-defined lane and run `--headless`, so the launcher now refuses them until they are reworked.
