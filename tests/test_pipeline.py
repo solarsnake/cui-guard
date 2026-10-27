@@ -287,7 +287,6 @@ def test_readonly_clean_or_allowed_forwards_untouched():
     assert [b.rule_id for b in d.blocked] == ["history.thinking_sensitive"]
 
 
-
 def test_readonly_own_placeholders_do_not_block():
     """Thinking that repeats the guard's placeholders carries no real value (R2)."""
     smap = SessionMap()
@@ -299,6 +298,7 @@ def test_readonly_own_placeholders_do_not_block():
     # A real value beside a placeholder still stops the request.
     d = make()[0].evaluate(ro_view("hello", ro=[f"{phs[1]} and real.person@example.mil"]))
     assert [b.rule_id for b in d.blocked] == ["history.thinking_sensitive"]
+
 
 def test_unchanged_cache_skipped_when_map_grows_mid_evaluate():
     """A value another request maps while this segment is re-masked must not be cached past (M7)."""
