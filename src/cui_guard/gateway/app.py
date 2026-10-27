@@ -55,6 +55,72 @@ _LEFTOVER_NOTE = re.compile(r"leftover_placeholders=(\d+)")
 PROMPT_COOLDOWN_S = 60.0
 MAX_UNGRANTED_FLOWS = 3
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+MAX_BODY_BYTES = 32 * 1024 * 1024
+_TOO_LARGE = "cui-guard: request body exceeds 32 MiB"
+_CROSS_SITE = frozenset({"cross-site", "same-site"})
+
+
+def _allowed_hosts(port: int) -> frozenset[str]:
+    return frozenset({f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"})
+
+
+class LoopbackGuard:
+    """Pure-ASGI guard, ahead of routing and any body read: refuses DNS-rebinding Host
+    values and browser-originated requests (Origin, cross-site Sec-Fetch-Site)."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    def _reason(self, scope, port: int) -> str | None:
+        hosts: list[str] = []
+        origin = False
+        site = ""
+        for k, v in scope["headers"]:
+            if k == b"host":
+                hosts.append(v.decode("latin-1").lower())
+            elif k == b"origin":
+                origin = True
+            elif k == b"sec-fetch-site":
+                site = v.decode("latin-1").strip().lower()
+        allowed = _allowed_hosts(port)
+        if not hosts or any(h not in allowed for h in hosts):
+            return "host not allowed"
+        if origin:
+            return "browser-originated request refused (Origin header)"
+        if site in _CROSS_SITE:
+            return "browser-originated request refused (cross-site fetch)"
+        return None
+
+    async def __call__(self, scope, receive, send) -> None:
+        # The port is the one the server actually listens on (scope["server"]). In-process
+        # test transports have no loopback listener, so the guard has nothing to bind to there.
+        server = scope.get("server")
+        if scope["type"] == "http" and server and server[0] in _LOOPBACK and server[1]:
+            reason = self._reason(scope, server[1])
+            if reason is not None:
+                body = {"type": "error", "error": {"type": "forbidden", "message": f"cui-guard: {reason}"}}
+                await JSONResponse(body, status_code=403)(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+async def read_capped(request: Request) -> bytes:
+    """Read the body, refusing as soon as it is known or seen to exceed MAX_BODY_BYTES."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        raise BodyTooLarge
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            raise BodyTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @dataclass
@@ -280,7 +346,7 @@ def create_app(
         return False
 
     def upstream_headers(request: Request, adapter: Adapter) -> list[tuple[str, str]]:
-        drop = set(_HOP_BY_HOP) | {GUARD_HEADER, "accept-encoding"}
+        drop = set(_HOP_BY_HOP) | {GUARD_HEADER, "accept-encoding", "cookie"}
         if cfg.credential_mode != "passthrough":
             drop |= {"authorization", "x-api-key"}
         out = [(k, v) for k, v in request.headers.items() if k.lower() not in drop]
@@ -362,7 +428,10 @@ def create_app(
     async def count_tokens(request: Request) -> Response:
         if not authorized(request):
             return Response(status_code=401)
-        raw = await request.body()
+        try:
+            raw = await read_capped(request)
+        except BodyTooLarge:
+            return JSONResponse(adapters["anthropic"].error_body(_TOO_LARGE), status_code=413)
         await arecord(Decision(), hashlib.sha256(raw).hexdigest(), action="rejected")
         return JSONResponse(
             {"type": "error", "error": {"type": "not_found_error", "message": "not supported"}},
@@ -376,7 +445,10 @@ def create_app(
                     adapter.error_body("cui-guard: missing or invalid session token"),
                     status_code=401,
                 )
-            raw = await request.body()
+            try:
+                raw = await read_capped(request)
+            except BodyTooLarge:
+                return JSONResponse(adapter.error_body(_TOO_LARGE), status_code=413)
             request_hash = hashlib.sha256(raw).hexdigest()
             if adapter.format not in lane.formats:
                 await arecord(Decision(), request_hash, action="rejected")
@@ -552,5 +624,6 @@ def create_app(
         for path in adapter.paths:
             routes.append(Route(path, make_handler(adapter), methods=["POST"]))
     app = Starlette(routes=routes, lifespan=lifespan)
+    app.add_middleware(LoopbackGuard)
     app.state.client = client
     return app
