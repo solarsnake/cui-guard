@@ -46,7 +46,7 @@ class Upstream:
 
 def client(cfg, up, **kw):
     app = create_app(cfg, transport=httpx.MockTransport(up), **kw)
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8080")
 
 
 def msg(text, **extra):

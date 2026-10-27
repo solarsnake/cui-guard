@@ -92,11 +92,14 @@ class LoopbackGuard:
         return None
 
     async def __call__(self, scope, receive, send) -> None:
-        # The port is the one the server actually listens on (scope["server"]). In-process
-        # test transports have no loopback listener, so the guard has nothing to bind to there.
-        server = scope.get("server")
-        if scope["type"] == "http" and server and server[0] in _LOOPBACK and server[1]:
-            reason = self._reason(scope, server[1])
+        if scope["type"] == "http":
+            # The port is the one the server actually listens on (scope["server"]); with no
+            # loopback address and port to check against, fail closed.
+            server = scope.get("server")
+            if server and server[0] in _LOOPBACK and server[1]:
+                reason = self._reason(scope, server[1])
+            else:
+                reason = "not served on a loopback address"
             if reason is not None:
                 body = {"type": "error", "error": {"type": "forbidden", "message": f"cui-guard: {reason}"}}
                 await JSONResponse(body, status_code=403)(scope, receive, send)

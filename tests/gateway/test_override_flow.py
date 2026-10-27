@@ -156,7 +156,7 @@ async def test_prompt_cooldown_and_cap(tmp_path):
     from cui_guard.gateway.app import create_app
 
     app = create_app(cfg, transport=httpx.MockTransport(Upstream()), channel=ch, clock=lambda: now[0])
-    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
+    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8080")
     async with c:
         async def attempt(n):
             await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)
