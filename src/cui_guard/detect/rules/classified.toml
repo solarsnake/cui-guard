@@ -4,7 +4,7 @@
 [[rule]]
 id = "classified-banner"
 class = "classified-marking"
-regex = '''^[ \t]*(TOP SECRET|SECRET|CONFIDENTIAL)(//.+)?[ \t]*\r?$'''
+regex = '''^[ \t]*((?i:(TOP SECRET|SECRET|CONFIDENTIAL)//.+)|(TOP SECRET|SECRET|CONFIDENTIAL))[ \t]*\r?$'''
 flags = ["MULTILINE"]
 verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2001&section=2001.21"

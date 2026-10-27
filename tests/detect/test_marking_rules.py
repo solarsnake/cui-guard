@@ -195,3 +195,32 @@ def test_rules_from_patterns_errors(entry, needle):
     with pytest.raises(ValueError, match=r"patterns\[1\]") as ei:
         rules_from_patterns([good, entry], "org.toml")
     assert needle in str(ei.value) or needle == "patterns[1]"
+
+
+@pytest.mark.parametrize(
+    ("text", "cls"),
+    [
+        ("sEcReT//nOfOrN", DetClass.CLASSIFIED_MARKING),
+        ("Top Secret//si", DetClass.CLASSIFIED_MARKING),
+        ("cui//sp-cti", DetClass.CUI_MARKING),
+        ("cUi//sP-cTi\nbody", DetClass.CUI_MARKING),
+        ("Controlled//Sp-Cti", DetClass.CUI_MARKING),
+        ("note: cui//opsec end", DetClass.CUI_MARKING),
+    ],
+)
+def test_mixed_case_compound_markings_caught(text, cls):
+    assert cls in classes(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "secret",
+        "confidential",
+        "cui",
+        "the secret\nconfidential\nplan",
+        "This is secret and confidential.",
+    ],
+)
+def test_bare_lowercase_words_not_markings(text):
+    assert not (classes(text) & MARKING)

@@ -4,7 +4,7 @@
 [[rule]]
 id = "cui-banner"
 class = "cui-marking"
-regex = '''^[ \t]*(CUI|CONTROLLED)(//[A-Z0-9 ,/\-]+)?[ \t]*\r?$'''
+regex = '''^[ \t]*((?i:(CUI|CONTROLLED)//[A-Z0-9 ,/\-]+)|(CUI|CONTROLLED))[ \t]*\r?$'''
 flags = ["MULTILINE"]
 verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2002"
@@ -12,14 +12,14 @@ source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?par
 [[rule]]
 id = "cui-specified-category"
 class = "cui-marking"
-regex = '''CUI//SP-[A-Z]+(/SP-[A-Z]+)*'''
+regex = '''(?i:CUI//SP-[A-Z]+(/SP-[A-Z]+)*)'''
 verified = true
 source = "https://www.archives.gov/cui/registry/category-marking-list.html"
 
 [[rule]]
 id = "cui-basic-category"
 class = "cui-marking"
-regex = '''CUI//(ISVI|OPSEC|PHYS|LEI|PRIVILEGE|DCRIT)'''
+regex = '''(?i:CUI//(ISVI|OPSEC|PHYS|LEI|PRIVILEGE|DCRIT))'''
 verified = true
 source = "https://www.archives.gov/cui/registry/category-marking-list.html"
 

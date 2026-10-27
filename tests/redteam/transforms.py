@@ -237,8 +237,6 @@ EXPECTED: dict[tuple[str, str], Literal["CAUGHT", "KNOWN_GAP"]] = {
     ("line_wrap", "secret_anthropic"): "KNOWN_GAP",
     ("line_wrap", "secret_aws"): "KNOWN_GAP",
     # mixed_case
-    ("mixed_case", "classified"): "KNOWN_GAP",
-    ("mixed_case", "cui"): "KNOWN_GAP",
     ("mixed_case", "person"): "KNOWN_GAP",
     ("mixed_case", "secret_anthropic"): "KNOWN_GAP",
     ("mixed_case", "secret_aws"): "KNOWN_GAP",

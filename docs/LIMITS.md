@@ -52,12 +52,12 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 
 The red-team corpus (`tests/redteam`) sends obfuscated canaries through the gateway on a public lane. These forms still reach the upstream, and each is pinned as a known gap in the tests. Text that is only hidden by Unicode tricks (homoglyphs, zero-width characters, full-width forms, combining marks, non-breaking spaces) or by JSON `\u` escapes is caught. Values in tool schema descriptions, file paths and document titles are caught too.
 
-- `base64`: a value that is base64-encoded before it is sent is not decoded or detected.
-- `hex`: a value that is hex-encoded before it is sent is not decoded or detected.
-- `percent`: URL percent-encoded values (`%43%55%49...`) are not decoded.
-- `html_entity`: HTML numeric entities (`&#67;&#85;...`) are not decoded.
+- `base64`: a value that is base64-encoded before it is sent is not decoded or detected, classified markings included.
+- `hex`: a value that is hex-encoded before it is sent is not decoded or detected, classified markings included.
+- `percent`: URL percent-encoded values (`%43%55%49...`) are not decoded, classified markings included.
+- `html_entity`: HTML numeric entities (`&#67;&#85;...`) are not decoded, classified markings included.
 - `line_wrap`: a newline inserted in the middle of a CUI marking, host, IP address, codename, person name or secret hides it. Emails, classified markings and Nessus-shaped exports are still caught.
-- `mixed_case`: markings, secrets and person-name literals match case-sensitively, so alternating-case copies are not detected.
+- `mixed_case`: secrets and person-name literals match case-sensitively, so alternating-case copies are not detected. Compound markings such as `sEcReT//nOfOrN` and `cui//sp-cti` are caught; bare single words stay case-sensitive.
 - `split_blocks`: a value split across two content blocks of one message is not rejoined (except emails and classified markings).
 - `split_messages`: a value split across two messages is not rejoined (same exceptions).
 - `split_tool_args`: a value split across two tool-call arguments is not rejoined (same exceptions).
