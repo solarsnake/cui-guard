@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.28"]
 build-backend = "hatchling.build"
 
 [project]
@@ -10,15 +10,17 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "starlette",
-    "uvicorn",
-    "httpx",
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "ruff"]
 ner = ["presidio-analyzer", "spacy"]
 macos = ["pyobjc-framework-LocalAuthentication; sys_platform=='darwin'"]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "ruff", "hypothesis", "pip-audit", "cyclonedx-bom", "zizmor", "uv>=0.9.17"]
 
 [project.scripts]
 cui-guard = "cui_guard.cli:main"
@@ -26,6 +28,10 @@ cui-guard = "cui_guard.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cui_guard"]
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [tool.pytest.ini_options]
+markers = ["network: needs the package index (uv lock)"]
 asyncio_mode = "auto"
 testpaths = ["tests"]

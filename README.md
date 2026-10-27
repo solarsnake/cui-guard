@@ -12,6 +12,14 @@ pipx install "cui-guard[macos]"   # macOS: Touch ID / password prompts for overr
 
 Supported platforms: macOS and Linux (including WSL2). Python 3.11 or newer.
 
+## Development
+
+```
+pip install uv
+uv sync --group dev               # or: pip install -e . --group dev  (pip 25.1 or newer)
+scripts/check all                 # lint, test, lock
+```
+
 ## Quick start
 
 ```
