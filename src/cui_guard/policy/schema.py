@@ -51,6 +51,7 @@ class PolicyLayer:
     overrides_enabled: bool | None = None
     override_disabled_rules: frozenset[str] | None = None
     audit: AuditConfig | None = None
+    egress_rehydration: Literal["withhold", "allow"] | None = None
     # Org-only keys.
     lock_endpoints: bool | None = None
     lock_profile: str | None = None
@@ -64,7 +65,7 @@ class PolicyLayer:
 
 _COMMON_KEYS = {
     "profile", "default_lane", "endpoints", "identifiers", "patterns", "actions",
-    "overrides_enabled", "override_disabled_rules", "audit",
+    "overrides_enabled", "override_disabled_rules", "audit", "egress_rehydration",
 }  # fmt: skip
 _ORG_KEYS = {
     "lock_endpoints", "lock_profile", "user_config", "min_version", "messages_file", "poc",
@@ -72,6 +73,7 @@ _ORG_KEYS = {
 _ENDPOINT_KEYS = {"url", "formats", "trust", "credential"}
 _AUDIT_KEYS = {"path", "sink", "on_sink_failure"}
 _ID_KEYS = {"domains", "ip_ranges", "codenames", "jira_projects", "people"}
+EGRESS_MODES = ("withhold", "allow")
 DEFAULT_AUDIT_PATH = "{state_dir}/audit.jsonl"
 
 
@@ -261,6 +263,11 @@ def parse_layer(data: dict, source: str) -> PolicyLayer:
         sink = _str("audit.sink", t["sink"]) if "sink" in t else None
         path = _str("audit.path", t.get("path", DEFAULT_AUDIT_PATH))
         layer.audit = AuditConfig(path=path, sink=sink, on_sink_failure=on_fail)
+    if "egress_rehydration" in data:
+        mode = data["egress_rehydration"]
+        if mode not in EGRESS_MODES:
+            raise PolicyError(f"egress_rehydration: unknown value {mode!r}")
+        layer.egress_rehydration = mode
     if "lock_endpoints" in data:
         layer.lock_endpoints = _bool("lock_endpoints", data["lock_endpoints"])
     if "lock_profile" in data:
@@ -323,6 +330,7 @@ class EffectivePolicy:
     min_version: str | None
     provenance: dict[str, str]
     actions: dict[tuple[str, Trust], Action] = field(default_factory=dict)
+    egress_rehydration: str = "withhold"
 
     def action_for_class(self, cls: DetClass, trust: Trust) -> Action:
         """Class action; a missing cell fails closed to block-hard."""
@@ -374,12 +382,15 @@ class EffectivePolicy:
             "actions": [
                 [k, t.value, _action_name(a)] for (k, t), a in self.actions.items()
             ],
+            "egress_rehydration": self.egress_rehydration,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> EffectivePolicy:
         try:
             a = d["audit"]
+            if d["egress_rehydration"] not in EGRESS_MODES:
+                raise PolicyError("invalid serialized policy: egress_rehydration")
             return cls(
                 profile=d["profile"],
                 endpoints={
@@ -405,6 +416,7 @@ class EffectivePolicy:
                 min_version=d["min_version"],
                 provenance=dict(d["provenance"]),
                 actions={(k, Trust(t)): Action.parse(a_) for k, t, a_ in d["actions"]},
+                egress_rehydration=d["egress_rehydration"],
             )
         except PolicyError:
             raise

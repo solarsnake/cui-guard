@@ -142,6 +142,15 @@ def merge_layers(
         *(x.override_disabled_rules or frozenset() for x in layers)
     )
 
+    # Egress rehydration: strictest wins, so any layer's "withhold" beats "allow".
+    egress, prov["egress_rehydration"] = "withhold", "builtin"
+    modes = [(x.egress_rehydration, x.source) for x in layers if x.egress_rehydration is not None]
+    if modes and all(m == "allow" for m, _ in modes):
+        egress, prov["egress_rehydration"] = "allow", modes[-1][1]
+    for m, src in modes:
+        if m == "withhold":
+            prov["egress_rehydration"] = src
+
     # Highest layer that sets a scalar wins.
     default_lane = messages_file = poc = None
     audit = AuditConfig(path=DEFAULT_AUDIT_PATH)
@@ -183,4 +192,5 @@ def merge_layers(
         min_version=org.min_version if org is not None else None,
         provenance=prov,
         actions=actions,
+        egress_rehydration=egress,
     )

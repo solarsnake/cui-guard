@@ -220,31 +220,48 @@ class OpenAIWalker(_Walker):
             self._leaves(k, body, k)
 
 
+# Output items the client executes, and the field that carries what it runs. Every string in
+# that field takes the egress-checked tool path (`arguments` does wherever it appears).
+_TOOL_FIELDS = {
+    "custom_tool_call": "input",
+    "local_shell_call": "action",
+    "shell_call": "action",
+    "computer_call": "action",
+}
+
+
 def rehydrate_args(text: str, smap: SessionMap) -> str:
-    """Rehydrate tool-call arguments; malformed JSON falls back to plain string rehydration."""
+    """Rehydrate tool-call arguments; malformed JSON falls back to whole-string rehydration."""
     try:
-        return rehydrate_json_text(text, smap)
+        return rehydrate_json_text(text, smap, tool=True)
     except ValueError:
-        return smap.rehydrate(text)
+        return smap.rehydrate_tool(text)
 
 
 def finish_args(buf: ArgsBuffer, smap: SessionMap) -> str:
     return rehydrate_args("".join(buf._parts), smap)
 
 
-def rehydrate_tree(obj: Any, smap: SessionMap, key: str | None = None) -> Any:
-    """Rehydrate string values; reasoning items and encrypted_content stay untouched."""
+def rehydrate_tree(obj: Any, smap: SessionMap, key: str | None = None, tool: bool = False) -> Any:
+    """Rehydrate string values; reasoning items and encrypted_content stay untouched.
+
+    Tool-call input (`tool`) is egress-checked per string: one naming an outside host keeps
+    its placeholders.
+    """
     if isinstance(obj, str):
         if key == "arguments" and obj.strip():
             return rehydrate_args(obj, smap)
-        return smap.rehydrate(obj)
+        return smap.rehydrate_tool(obj) if tool else smap.rehydrate(obj)
     if isinstance(obj, list):
-        return [rehydrate_tree(v, smap) for v in obj]
+        return [rehydrate_tree(v, smap, tool=tool) for v in obj]
     if isinstance(obj, dict):
         if obj.get("type") == "reasoning":
             return obj
+        t = obj.get("type")
+        field = _TOOL_FIELDS.get(t) if isinstance(t, str) else None
         return {
-            k: v if k == "encrypted_content" else rehydrate_tree(v, smap, k) for k, v in obj.items()
+            k: v if k == "encrypted_content" else rehydrate_tree(v, smap, k, tool or k == field)
+            for k, v in obj.items()
         }
     return obj
 
@@ -397,7 +414,7 @@ class _ResponsesStream:
         text = "".join(parts) if "".join(parts).strip() else (raw if isinstance(raw, str) else "")
         if not text.strip():
             return [ev]
-        full = self._smap.rehydrate(text)
+        full = self._smap.rehydrate_tool(text)
         self._count(full)
         t = "response.custom_tool_call_input.delta"
         meta = {k: data[k] for k in ("item_id", "output_index") if k in data}

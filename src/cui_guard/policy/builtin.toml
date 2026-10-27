@@ -3,6 +3,8 @@
 
 profile = "cui"
 default_lane = "anthropic"
+# Tool-call strings that name an outside host keep their placeholders (spec 5 H4).
+egress_rehydration = "withhold"
 
 [audit]
 # "{state_dir}" is expanded when the effective policy is built.

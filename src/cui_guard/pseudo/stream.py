@@ -95,21 +95,25 @@ class TextHoldback:
         return out
 
 
-def _walk(obj: Any, smap: SessionMap) -> Any:
+def _walk(obj: Any, smap: SessionMap, tool: bool) -> Any:
+    """Rehydrate string values; `tool` marks tool-call input, which is egress-checked per string."""
     if isinstance(obj, str):
-        return smap.rehydrate(obj)
+        return smap.rehydrate_tool(obj) if tool else smap.rehydrate(obj)
     if isinstance(obj, list):
-        return [_walk(v, smap) for v in obj]
+        return [_walk(v, smap, tool) for v in obj]
     if isinstance(obj, dict):
         # Keys are never scanned outbound, so they are never rehydrated.
-        return {k: _walk(v, smap) for k, v in obj.items()}
+        return {k: _walk(v, smap, tool) for k, v in obj.items()}
     return obj
 
 
-def rehydrate_json_text(json_text: str, smap: SessionMap) -> str:
-    """Rehydrate every string value (never keys) of a JSON document; raises ValueError if invalid."""
+def rehydrate_json_text(json_text: str, smap: SessionMap, tool: bool = True) -> str:
+    """Rehydrate every string value (never keys) of a JSON document; raises ValueError if invalid.
+
+    Every caller rehydrates tool-call arguments, so `tool` defaults to the egress-checked path.
+    """
     obj = json.loads(json_text)  # JSONDecodeError is a ValueError
-    return json.dumps(_walk(obj, smap), ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(_walk(obj, smap, tool), ensure_ascii=False, separators=(",", ":"))
 
 
 class ArgsBuffer:
@@ -122,4 +126,4 @@ class ArgsBuffer:
         self._parts.append(fragment)
 
     def finish(self, smap: SessionMap) -> str:
-        return rehydrate_json_text("".join(self._parts), smap)
+        return rehydrate_json_text("".join(self._parts), smap, tool=True)

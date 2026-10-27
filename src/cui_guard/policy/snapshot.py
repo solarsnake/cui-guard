@@ -12,6 +12,7 @@ from cui_guard.model import Action, Trust
 from cui_guard.policy.loader import load_builtin_layer, state_dir
 from cui_guard.policy.schema import (
     DEFAULT_AUDIT_PATH,
+    EGRESS_MODES,
     AuditConfig,
     Endpoint,
     PolicyError,
@@ -138,6 +139,10 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
     ):
         reasons.append(f"override-disabled rule removed: {rule_id}")
 
+    # Unset means the built-in default (withhold), so only an explicit "allow" loosens.
+    if prev.egress_rehydration != "allow" and cur.egress_rehydration == "allow":
+        reasons.append("egress_rehydration set to allow")
+
     prev_path = prev.audit.path if prev.audit else DEFAULT_AUDIT_PATH
     if cur.audit is not None and cur.audit.path != prev_path:
         reasons.append(f"audit log path changed: {prev_path} -> {cur.audit.path}")
@@ -181,6 +186,8 @@ def _to_dict(layer: PolicyLayer) -> dict:
             "sink": layer.audit.sink,
             "on_sink_failure": layer.audit.on_sink_failure,
         }
+    if layer.egress_rehydration is not None:
+        d["egress_rehydration"] = layer.egress_rehydration
     return d
 
 
@@ -269,6 +276,9 @@ def _from_dict(d: dict) -> PolicyLayer:
         ):
             raise PolicyError("snapshot: bad audit")
         layer.audit = AuditConfig(a["path"], a["sink"], a["on_sink_failure"])
+    if d.get("egress_rehydration") not in (None, *EGRESS_MODES):
+        raise PolicyError("snapshot: bad egress_rehydration")
+    layer.egress_rehydration = d.get("egress_rehydration")
     return layer
 
 

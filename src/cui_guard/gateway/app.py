@@ -37,6 +37,7 @@ from cui_guard.override.human import load_messages, render, warning_key
 from cui_guard.override.store import OverrideStore
 from cui_guard.pipeline import BlockInfo, Decision, Pipeline, Segment
 from cui_guard.policy.schema import EffectivePolicy, Endpoint, is_loopback_host
+from cui_guard.pseudo.egress import EgressGuard
 from cui_guard.pseudo.mapper import SessionMap
 
 if TYPE_CHECKING:
@@ -229,6 +230,11 @@ def _leftover_from_notes(notes: list[str]) -> int:
     return total
 
 
+def _withheld_decision(count: int) -> Decision:
+    """Audit record for tool-call strings left unrehydrated (H4): the count only."""
+    return Decision(hit_counts={"rehydrate.withheld": count})
+
+
 def create_app(
     cfg: GatewayConfig,
     *,
@@ -241,7 +247,8 @@ def create_app(
     adapters: dict[str, Adapter] = {
         a.format: a for a in (AnthropicAdapter(), OpenAIResponsesAdapter(), OpenAIChatAdapter())
     }
-    smap = SessionMap()
+    egress = EgressGuard(policy.identifiers, policy.egress_rehydration)  # type: ignore[arg-type]
+    smap = SessionMap(egress=egress)
     overrides = OverrideStore()
     messages = load_messages(policy.messages_file)  # an unreadable org file fails startup
     detector = Detector(load_builtin_rules() + policy.extra_rules, policy.identifiers, load_presidio())
@@ -554,9 +561,14 @@ def create_app(
                 result = JSONResponse(
                     adapter.error_body("cui-guard: unreadable upstream response"), status_code=502
                 )
+        withheld = smap.take_withheld()
         if not await arecord(decision, request_hash, leftover):
             return audit_down(adapter, "response")
-        notify_leftover(leftover)
+        if withheld and not await arecord(
+            _withheld_decision(withheld), request_hash, action="withheld"
+        ):
+            return audit_down(adapter, "response")
+        notify_leftover(leftover + withheld)
         return result
 
     async def stream_path(adapter, req, decision, request_hash) -> Response:
@@ -628,14 +640,19 @@ def create_app(
                 if nxt is not None:
                     nxt.cancel()
                 leftover = _leftover_from_notes(rewriter.notes)
+                withheld = smap.take_withheld()
                 try:
                     recorded = await arecord(decision, request_hash, leftover)
+                    if recorded and withheld:
+                        recorded = await arecord(
+                            _withheld_decision(withheld), request_hash, action="withheld"
+                        )
                 except Exception:  # noqa: BLE001 - never skip closing upstream or the notices
                     recorded = False
                 if not recorded:
                     audit_failed_late()
                 await resp.aclose()
-                notify_leftover(leftover)
+                notify_leftover(leftover + withheld)
 
         headers = response_headers(resp)
         headers["content-type"] = "text/event-stream"

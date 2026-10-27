@@ -60,6 +60,8 @@ Profile `cui` is the default. Profile `general` additionally allows controlled-c
 
 There is no project-level layer. The user config can be edited by the agent, so whenever it loosens the built-in defaults (for example a higher-trust lane, the `general` profile, a lane that is given a credential, or a default lane you defined yourself), every launch asks for OS authentication before continuing, and `--headless` launches are refused. The prompt also lists what changed since your last approval. See [docs/LIMITS.md](docs/LIMITS.md).
 
+`egress_rehydration = "withhold" | "allow"` (default `withhold`, set in the built-in layer; the strictest value across layers wins): placeholders in a tool-call string that names an outside host (a URL, `user@host`, a `name.tld` with a common TLD, or an IP literal that is not loopback, a session placeholder, or one of your identifier domains and IP ranges) are not rehydrated, so a hostile model cannot get the agent to send real values out. Each such response adds a `rehydrate.withheld` audit record with a count. Setting `allow` is a loosening and needs OS authentication. See [docs/LIMITS.md](docs/LIMITS.md).
+
 ## Overrides
 
 A blocked request can sometimes be overridden by a person at the keyboard: the gateway shows an on-screen warning, asks for a typed justification, and requires OS authentication (Touch ID or password on macOS, which needs the `[macos]` extra; on Linux a zenity or kdialog dialog for the justification and `pkexec` for authentication, with no terminal prompt). There is no CLI command and no HTTP route that grants an override, so the agent cannot approve its own. Classified markings and unparseable content cannot be overridden. Organizations can disable overrides entirely. Each override is written to the audit log with its justification.
@@ -72,7 +74,7 @@ A blocked request can sometimes be overridden by a person at the keyboard: the g
 
 ## Audit log
 
-One JSON line per request in `~/.local/state/cui-guard/audit.jsonl`: rule IDs, counts and hashes (plus override justifications). It never contains matched values, placeholder IDs or raw content. The local file is always written; organizations can add a syslog sink, the only other sink in v1.
+One JSON line per request in `~/.local/state/cui-guard/audit.jsonl`, plus a `withheld` line when tool-call placeholders were withheld: rule IDs, counts and hashes (plus override justifications). It never contains matched values, placeholder IDs or raw content. The local file is always written; organizations can add a syslog sink, the only other sink in v1.
 
 ## What this is not
 

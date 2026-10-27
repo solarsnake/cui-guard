@@ -303,3 +303,16 @@ def test_unknown_action_key_rejected():
     pat = {"id": "u.pat", "class": "secret", "regex": "zzz+"}
     pol = merged(user={"patterns": [pat], "actions": {"u.pat": {"public": "block"}}})
     assert pol.actions[("u.pat", Trust.PUBLIC)] is B
+
+
+def test_egress_rehydration_strictest_and_round_trips():
+    assert merged().egress_rehydration == "withhold"
+    assert merged(user={"egress_rehydration": "allow"}).egress_rehydration == "withhold"
+    pol = merged(user={"egress_rehydration": "allow"}, org={"egress_rehydration": "withhold"})
+    assert (pol.egress_rehydration, pol.provenance["egress_rehydration"]) == ("withhold", "org")
+    again = EffectivePolicy.from_dict(json.loads(json.dumps(pol.to_dict())))
+    assert again.egress_rehydration == "withhold"
+    with pytest.raises(PolicyError):
+        parse_layer({"egress_rehydration": "maybe"}, "user")
+    with pytest.raises(PolicyError):
+        EffectivePolicy.from_dict({**pol.to_dict(), "egress_rehydration": "off"})

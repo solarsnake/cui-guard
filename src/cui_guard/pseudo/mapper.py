@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import re
 import threading
+from typing import TYPE_CHECKING
 
 from cui_guard.model import Hit
+
+if TYPE_CHECKING:
+    from cui_guard.pseudo.egress import EgressGuard
 
 _IP_MAX = 65534
 
@@ -33,7 +37,10 @@ PLACEHOLDER_KINDS = frozenset(_FORMATS)
 
 
 class SessionMap:
-    def __init__(self) -> None:
+    def __init__(self, egress: EgressGuard | None = None) -> None:
+        self.egress = egress
+        self.withheld = 0  # tool-call strings left unrehydrated since the last take_withheld()
+        self._withheld_seen: set[str] = set()
         self._lock = threading.Lock()
         self._fwd: dict[tuple[str, str], str] = {}
         self._rev: dict[str, str] = {}
@@ -113,6 +120,34 @@ class SessionMap:
         with self._lock:
             self._record(text)
             return PLACEHOLDER_RE.sub(lambda m: self._rev.get(m.group(0), m.group(0)), text)
+
+    def rehydrate_tool(self, text: str) -> str:
+        """Rehydrate a string bound for a tool call, unless it names an outside host."""
+        g = self.egress
+        if g is None or g.mode != "withhold" or not PLACEHOLDER_RE.search(text):
+            return self.rehydrate(text)
+        if not g.is_outbound(text, self):
+            return self.rehydrate(text)
+        with self._lock:
+            self._record(text)
+            # A stream repeats a call's arguments in later events; each string counts once.
+            if text not in self._withheld_seen and any(
+                m.group(0) in self._rev for m in PLACEHOLDER_RE.finditer(text)
+            ):
+                self._withheld_seen.add(text)
+                self.withheld += 1
+        return text
+
+    def take_withheld(self) -> int:
+        """The withheld count since the last call, reset to 0."""
+        with self._lock:
+            n, self.withheld = self.withheld, 0
+            self._withheld_seen.clear()
+            return n
+
+    def knows(self, placeholder: str) -> bool:
+        with self._lock:
+            return placeholder in self._rev
 
     def leftover_placeholders(self, text: str) -> list[str]:
         with self._lock:

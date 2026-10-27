@@ -228,14 +228,15 @@ class _Walker:
             del body["mcp_servers"]
 
 
-def _rehydrate_tree(obj: Any, smap: SessionMap) -> Any:
+def _rehydrate_tree(obj: Any, smap: SessionMap, tool: bool) -> Any:
+    """`tool` marks tool-call input: each string is egress-checked before it is rehydrated."""
     if isinstance(obj, str):
-        return smap.rehydrate(obj)
+        return smap.rehydrate_tool(obj) if tool else smap.rehydrate(obj)
     if isinstance(obj, list):
-        return [_rehydrate_tree(v, smap) for v in obj]
+        return [_rehydrate_tree(v, smap, tool) for v in obj]
     if isinstance(obj, dict):
         # Keys are never scanned outbound, so they are never rehydrated.
-        return {k: _rehydrate_tree(v, smap) for k, v in obj.items()}
+        return {k: _rehydrate_tree(v, smap, tool) for k, v in obj.items()}
     return obj
 
 
@@ -253,7 +254,7 @@ def _rehydrate_blocks(blocks: Any, smap: SessionMap) -> None:
                         if isinstance(c.get(k), str):
                             c[k] = smap.rehydrate(c[k])
         elif b.get("type") in _TOOL_BLOCKS and "input" in b:
-            b["input"] = _rehydrate_tree(b["input"], smap)
+            b["input"] = _rehydrate_tree(b["input"], smap, tool=True)
 
 
 def _dump(data: dict) -> str:
@@ -347,7 +348,7 @@ class _AnthropicStream:
                 self._has_args.add(idx)
             return []
         if dtype == "citations_delta" and isinstance(delta.get("citation"), dict):
-            new = _rehydrate_tree(delta["citation"], self._smap)
+            new = _rehydrate_tree(delta["citation"], self._smap, tool=False)
             if new != delta["citation"]:
                 delta["citation"] = new
                 return [SSEEvent(ev.event, _dump(data))]

@@ -248,3 +248,16 @@ def test_default_lane_to_user_endpoint_is_loosening():
 def test_overrides_enabled_unset_is_default():
     assert loosenings(None, _layer(overrides_enabled=True)) == []
     assert loosenings(_layer(overrides_enabled=False), _layer()) == ["overrides enabled"]
+
+
+def test_egress_rehydration_allow_is_loosening(tmp_path):
+    allow = _layer(egress_rehydration="allow")
+    assert loosenings(None, allow) == ["egress_rehydration set to allow"]
+    assert loosenings(None, _layer(egress_rehydration="withhold")) == []
+    p = tmp_path / "snap.json"
+    save_snapshot(p, allow)
+    back = load_snapshot(p)
+    assert back is not None and back.egress_rehydration == "allow"
+    assert loosenings(back, allow) == []  # unchanged since the last approval
+    p.write_text('{"source": "user", "egress_rehydration": "off"}')
+    assert load_snapshot(p) is None
