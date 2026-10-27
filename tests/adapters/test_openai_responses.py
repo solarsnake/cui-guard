@@ -301,3 +301,25 @@ def test_reasoning_summary_scanned_read_only():
                                    {"type": "reasoning", "encrypted_content": "c2ln"}]}  # fmt: skip
     v = AD.extract(bad)
     assert v.unparseable == ["input[0].summary", "input[1].summary[0].text"] and v.readonly == []
+
+
+def test_reasoning_content_scanned_read_only_and_unknown_keys_unparseable():
+    """reasoning_text content is scanned like the summary; unknown keys fail closed (R1)."""
+    item = {"type": "reasoning", "id": "rs_2", "status": "completed", "encrypted_content": "c2ln",
+            "summary": [{"type": "summary_text", "text": "sum"}],
+            "content": [{"type": "reasoning_text", "text": "x\nSECRET//NOFORN\ny"}]}  # fmt: skip
+    body = {"model": "m", "input": [item]}
+    v = AD.extract(body)
+    assert [(s.location, s.text) for s in v.readonly] == [
+        ("input[0].summary[0].text", "sum"),
+        ("input[0].content[0].text", "x\nSECRET//NOFORN\ny"),
+    ]
+    assert v.unparseable == [] and v.segments == []
+    out = AD.apply(copy.deepcopy(body), Decision())
+    assert json.dumps(out["input"][0]) == json.dumps(item)
+    bad = {"model": "m", "input": [{"type": "reasoning", "content": "x"},
+                                   {"type": "reasoning", "content": [{"type": "reasoning_text"}]},
+                                   {"type": "reasoning", "notes": "hidden text"}]}  # fmt: skip
+    v = AD.extract(bad)
+    assert v.unparseable == ["input[0].content", "input[1].content[0].text", "input[2].notes"]
+    assert v.readonly == []

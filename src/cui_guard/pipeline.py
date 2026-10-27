@@ -11,7 +11,7 @@ from cui_guard.detect.engine import Detector
 from cui_guard.model import Action, DetClass, Hit, Trust
 from cui_guard.override.store import OverrideStore
 from cui_guard.policy.schema import EffectivePolicy
-from cui_guard.pseudo.mapper import SessionMap
+from cui_guard.pseudo.mapper import PLACEHOLDER_RE, SessionMap
 
 EXCERPT_CHARS = 120
 _UNCHANGED_MAX = 20000
@@ -204,6 +204,8 @@ class Pipeline:
     def _readonly(self, d: Decision, seg: Segment, hits: list[Hit]) -> None:
         """Text that cannot be rewritten: anything the lane would mask or block stops the request."""
         for hit in hits:
+            if PLACEHOLDER_RE.fullmatch(hit.value):
+                continue  # the guard's own placeholder carries no real value
             if self._policy.action_for(hit, self._trust) >= Action.PSEUDONYMIZE:
                 self._add_block(d, THINKING_RULE, hit.cls, Action.BLOCK_HARD, seg.location,
                                 f"{THINKING_MESSAGE} (matched {hit.rule_id})",

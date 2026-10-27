@@ -35,6 +35,8 @@ _ANNOTATION_SKIP = frozenset(
 _FORMAT_SKIP = frozenset({"type", "syntax"})
 _ACTION_SKIP = frozenset({"type"})
 _OUTCOME_SKIP = frozenset({"outcome"})
+# Anything else on a reasoning item could carry unscanned text.
+_REASONING_KEYS = frozenset({"type", "id", "summary", "content", "encrypted_content", "status"})
 
 
 def notice(kind: str) -> str:
@@ -159,15 +161,19 @@ class OpenAIWalker(_Walker):
             self.unparseable.append(loc)
 
     def _reasoning(self, loc: str, it: dict) -> None:
-        """Reasoning items are never modified; their summary text is scanned read-only."""
-        summary = it.get("summary")
-        if summary is None:
-            return
-        if not isinstance(summary, list):
-            self.unparseable.append(f"{loc}.summary")
-            return
-        for j, part in enumerate(summary):
-            self._ro(f"{loc}.summary[{j}].text", part, "text")
+        """Reasoning items are never modified; their summary and content text is scanned read-only."""
+        for k in it:
+            if k not in _REASONING_KEYS:
+                self.unparseable.append(f"{loc}.{k}")
+        for key in ("summary", "content"):
+            parts = it.get(key)
+            if parts is None:
+                continue
+            if not isinstance(parts, list):
+                self.unparseable.append(f"{loc}.{key}")
+                continue
+            for j, part in enumerate(parts):
+                self._ro(f"{loc}.{key}[{j}].text", part, "text")
 
     def _tools(self, tools: Any) -> None:
         if not isinstance(tools, list):
