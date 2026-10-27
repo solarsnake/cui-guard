@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Single entry point for the project's gates: scripts/check <gate> [...]
-# Gates: lint, test, lock, leak, fuzz, all. Add a gate by appending a case branch.
+# Gates: lint, test, lock, leak, fuzz, audit, secrets, workflows, all. Add a gate by appending a case branch.
 set -euo pipefail
 
 export UV_PYTHON_DOWNLOADS=never
@@ -49,6 +49,47 @@ gate_lock() {
   return "$rc"
 }
 
+# Prints one gate's skip reason and returns 3 so run_gate reports SKIPPED.
+SKIP_RC=3
+
+# pip-audit does not declare support for Python 3.15 or newer; run it on 3.12
+# (never downloaded) when the venv interpreter is that new.
+pip_audit() {
+  local py minor
+  py="$SELF_ROOT/.venv/bin/python"
+  minor="$("$py" -c 'import sys; print(sys.version_info[0] * 100 + sys.version_info[1])' 2>/dev/null || echo 0)"
+  if [ "$minor" -ge 315 ]; then
+    "$(tool uv)" tool run --python 3.12 pip-audit "$@"
+  else
+    "$(tool pip-audit)" "$@"
+  fi
+}
+
+# Every lock file is audited against both advisory sources; any finding from either fails.
+# IDs triaged in security/vex.cdx.json are passed through --ignore-vuln, then the VEX
+# itself is checked for expired, over-long or incomplete entries.
+gate_audit() {
+  local ids=() id f src
+  while IFS= read -r id; do
+    [ -n "$id" ] && ids+=(--ignore-vuln "$id")
+  done < <("$(tool python)" "$ROOT/scripts/security/vex.py" ids)
+  for f in runtime dev; do
+    for src in pypi osv; do
+      pip_audit --strict --require-hashes -s "$src" ${ids[@]+"${ids[@]}"} \
+        -r "$ROOT/requirements/$f.lock.txt" || return 1
+    done
+  done
+  "$(tool python)" "$ROOT/scripts/security/vex.py" check
+}
+gate_secrets() {
+  command -v gitleaks >/dev/null 2>&1 || { SKIP_REASON="gitleaks not installed; runs in CI"; return "$SKIP_RC"; }
+  (cd "$ROOT" && gitleaks git --redact --config .gitleaks.toml)
+}
+gate_workflows() {
+  [ -d "$ROOT/.github/workflows" ] || { SKIP_REASON="no workflows yet"; return "$SKIP_RC"; }
+  (cd "$ROOT" && "$(tool zizmor)" --config .github/zizmor.yml .github/workflows)
+}
+
 run_gate() {
   local gate="$1" rc=0
   case "$gate" in
@@ -57,9 +98,15 @@ run_gate() {
     lock) gate_lock || rc=$? ;;
     leak) gate_leak || rc=$? ;;
     fuzz) gate_fuzz || rc=$? ;;
-    *) echo "unknown gate: $gate (known: lint test lock leak fuzz all)" >&2; return 2 ;;
+    audit) gate_audit || rc=$? ;;
+    secrets) gate_secrets || rc=$? ;;
+    workflows) gate_workflows || rc=$? ;;
+    *) echo "unknown gate: $gate (known: lint test lock leak fuzz audit secrets workflows all)" >&2; return 2 ;;
   esac
-  if [ "$rc" -eq 0 ]; then
+  if [ "$rc" -eq "$SKIP_RC" ]; then
+    echo "== $gate: SKIPPED (${SKIP_REASON:-skipped})"
+    return 0
+  elif [ "$rc" -eq 0 ]; then
     echo "== $gate: PASS"
   else
     echo "== $gate: FAIL"
@@ -67,7 +114,7 @@ run_gate() {
   return "$rc"
 }
 
-[ "$#" -ge 1 ] || { echo "usage: scripts/check <gate> [...]  (lint test lock leak fuzz all)" >&2; exit 2; }
+[ "$#" -ge 1 ] || { echo "usage: scripts/check <gate> [...]  (lint test lock leak fuzz audit secrets workflows all)" >&2; exit 2; }
 
 failed=0
 for arg in "$@"; do
