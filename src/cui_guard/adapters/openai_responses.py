@@ -99,6 +99,8 @@ class OpenAIWalker(_Walker):
             if isinstance(anns, list):
                 for j in range(len(anns)):
                     self._leaves(f"{loc}.annotations[{j}]", anns, j, _ANNOTATION_SKIP)
+            elif anns is not None:
+                self.unparseable.append(f"{loc}.annotations")  # never forward an unscanned value
         elif t == "refusal":
             if "refusal" in p:
                 self._seg(f"{loc}.refusal", p, "refusal")
@@ -118,6 +120,9 @@ class OpenAIWalker(_Walker):
         t = it.get("type") if isinstance(it, dict) else None
         if isinstance(it, dict) and t is None and "role" in it:
             t = "message"
+        if not isinstance(t, str):
+            self.unparseable.append(loc)  # a non-string type is unhashable and unknown
+            return
         if t in _PASSTHROUGH_ITEMS:
             return
         if t == "reasoning":

@@ -121,7 +121,7 @@ class _Walker:
     def _block(self, loc: str, holder: list, i: int) -> None:
         b = holder[i]
         t = b.get("type") if isinstance(b, dict) else None
-        if t not in _KNOWN_TYPES:
+        if not isinstance(t, str) or t not in _KNOWN_TYPES:
             self.unparseable.append(loc)
             return
         if t in _PASSTHROUGH:
@@ -153,6 +153,8 @@ class _Walker:
             if isinstance(cites, list):
                 for j in range(len(cites)):
                     self._leaves(f"{loc}.citations[{j}]", cites, j, _CITATION_SKIP)
+            elif cites is not None:
+                self.unparseable.append(f"{loc}.citations")  # never forward an unscanned value
         elif t == "tool_use":
             if isinstance(b.get("input"), dict):
                 self._leaves(f"{loc}.input", b, "input")
