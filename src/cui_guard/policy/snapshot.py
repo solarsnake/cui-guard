@@ -280,9 +280,30 @@ def load_snapshot(path: Path) -> PolicyLayer | None:
         return None
 
 
+def ensure_private_dir(path: Path) -> None:
+    """Create `path` (and missing parents) as 0700. Directories that already existed are
+    tightened only if they are cui-guard's own (named `cui-guard`, or directly inside one)."""
+    path = Path(path)
+    missing = []
+    d = path
+    while not d.exists() and d != d.parent:
+        missing.append(d)
+        d = d.parent
+    ours = list(missing)
+    for cand in (path, path.parent):
+        if cand.exists() and cand not in ours and (
+            cand.name == "cui-guard" or cand.parent.name == "cui-guard"
+        ):
+            ours.append(cand)
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for d in ours:
+        if d.is_dir() and not d.is_symlink():
+            d.chmod(0o700)  # mkdir's mode is masked by the umask, and ignored for parents
+
+
 def save_snapshot(path: Path, layer: PolicyLayer | None) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     data = _to_dict(layer or PolicyLayer(source="user"))
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".snapshot-", suffix=".tmp")
     try:

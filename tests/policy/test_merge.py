@@ -120,12 +120,12 @@ def test_lock_endpoints():
 
 
 def test_fake_local_downgraded():
-    ep = {"url": "http://10.0.0.5:11434", "formats": ["openai-chat"], "trust": "local"}
+    ep = {"url": "https://ollama.lan:11434", "formats": ["openai-chat"], "trust": "local"}
     pol = merged(user={"endpoints": {"fake": ep}})
     assert pol.endpoints["fake"].trust is Trust.PUBLIC
     assert pol.endpoints["ollama"].trust is Trust.LOCAL
     ok = {
-        "url": "http://10.0.0.5:11434",
+        "url": "https://ollama.lan:11434",
         "formats": ["openai-chat"],
         "trust": "approved",
     }

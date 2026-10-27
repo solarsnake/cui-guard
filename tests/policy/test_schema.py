@@ -91,3 +91,27 @@ def test_pattern_kind_validated():
     for cls in ("cui-marking", "controlled-content", "classified-marking"):
         with pytest.raises(PolicyError, match="kind"):
             parse_layer(_pat(**{"class": cls, "kind": "term"}), "org")
+
+
+def _endpoint_layer(url):
+    return {"endpoints": {"x": {"url": url, "formats": ["anthropic"], "trust": "local"}}}
+
+
+@pytest.mark.parametrize("url", ["http://10.0.0.5:11434", "http://ollama.lan:11434", "http://example.com"])
+def test_cleartext_remote_endpoint_rejected(url):
+    with pytest.raises(PolicyError, match="loopback"):
+        parse_layer(_endpoint_layer(url), "user")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:11434",
+        "http://localhost:11434",
+        "http://[::1]:11434",
+        "http://127.0.0.2:8080",
+        "https://ollama.lan",
+    ],
+)
+def test_loopback_or_tls_endpoint_accepted(url):
+    parse_layer(_endpoint_layer(url), "user")

@@ -25,6 +25,7 @@ from cui_guard.override.human import select_channel
 from cui_guard.policy.loader import load_effective_policy, state_dir
 from cui_guard.policy.schema import EffectivePolicy, Endpoint, PolicyError
 from cui_guard.policy.snapshot import (
+    ensure_private_dir,
     load_snapshot,
     loosenings,
     save_snapshot,
@@ -250,7 +251,7 @@ def _read_ready(proc: subprocess.Popen) -> int:
 
 def _write_session_file(s: GatewaySession) -> Path:
     path = state_dir() / "sessions" / f"{s.session_id}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     data = {
         "pid": s.proc.pid,
         "port": s.port,

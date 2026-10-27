@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -130,6 +131,15 @@ def _credential_ok(cred: str) -> bool:
     return False
 
 
+def _is_loopback_host(host: str) -> bool:
+    if host.lower() in ("127.0.0.1", "::1", "localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback and host.count(":") == 0
+    except ValueError:
+        return False
+
+
 def _parse_endpoint(name: str, raw: Any) -> Endpoint:
     where = f"endpoints.{name}"
     t = _table(where, raw)
@@ -138,6 +148,11 @@ def _parse_endpoint(name: str, raw: Any) -> Endpoint:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise PolicyError(f"{where}.url: expected an http(s) URL")
+    if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
+        raise PolicyError(
+            f"{where}.url: http:// is only allowed for loopback hosts; "
+            "put TLS in front of remote model servers"
+        )
     formats = _str_list(f"{where}.formats", t.get("formats"))
     if not formats or not set(formats) <= FORMATS:
         raise PolicyError(

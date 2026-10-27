@@ -75,6 +75,9 @@ class LoopbackGuard:
         hosts: list[str] = []
         origin = False
         site = ""
+        names = [k for k, _ in scope["headers"]]
+        if b"content-length" in names and b"transfer-encoding" in names:
+            return "conflicting Content-Length and Transfer-Encoding"
         for k, v in scope["headers"]:
             if k == b"host":
                 hosts.append(v.decode("latin-1").lower())
@@ -101,8 +104,12 @@ class LoopbackGuard:
             else:
                 reason = "not served on a loopback address"
             if reason is not None:
-                body = {"type": "error", "error": {"type": "forbidden", "message": f"cui-guard: {reason}"}}
-                await JSONResponse(body, status_code=403)(scope, receive, send)
+                smuggling = reason.startswith("conflicting")
+                body = {
+                    "type": "error",
+                    "error": {"type": "bad_request" if smuggling else "forbidden", "message": f"cui-guard: {reason}"},
+                }
+                await JSONResponse(body, status_code=400 if smuggling else 403)(scope, receive, send)
                 return
         await self.app(scope, receive, send)
 
@@ -349,7 +356,10 @@ def create_app(
         return False
 
     def upstream_headers(request: Request, adapter: Adapter) -> list[tuple[str, str]]:
-        drop = set(_HOP_BY_HOP) | {GUARD_HEADER, "accept-encoding", "cookie"}
+        drop = set(_HOP_BY_HOP) | {GUARD_HEADER, "accept-encoding", "cookie", "proxy-connection"}
+        # RFC 9110 7.6.1: headers named in Connection are hop-by-hop too.
+        for value in request.headers.getlist("connection"):
+            drop |= {t.strip().lower() for t in value.split(",") if t.strip()}
         if cfg.credential_mode != "passthrough":
             drop |= {"authorization", "x-api-key"}
         out = [(k, v) for k, v in request.headers.items() if k.lower() not in drop]
@@ -497,11 +507,18 @@ def create_app(
 
     async def send_upstream(adapter: Adapter, req: httpx.Request, stream: bool):
         try:
-            return await client.send(req, stream=stream), None
+            resp = await client.send(req, stream=stream)
         except Exception:  # noqa: BLE001
             return None, JSONResponse(
                 adapter.error_body("cui-guard: upstream request failed"), status_code=502
             )
+        if 300 <= resp.status_code < 400:
+            # Never relay a redirect: the agent's own client would follow its Location.
+            await resp.aclose()
+            return None, JSONResponse(
+                adapter.error_body("cui-guard: upstream answered with a redirect"), status_code=502
+            )
+        return resp, None
 
     async def plain_path(adapter, req, decision, request_hash) -> Response:
         resp, err = await send_upstream(adapter, req, False)

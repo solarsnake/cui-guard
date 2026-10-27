@@ -57,6 +57,9 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **A pathological user regex can stall a session.** Python's regex engine cannot be interrupted. A catastrophic (ReDoS-prone) pattern in your own config makes scans time out. The request then fails closed (nothing is forwarded), but a worker thread stays busy, and repeated runaway scans can exhaust the worker pool. One gateway serves one session, so other sessions are not affected.
 - **Requests over 32 MiB are refused.** The gateway answers 413 and does not contact the upstream.
 - **Cross-origin and DNS-rebinding requests are refused.** A request with an `Origin` header, a cross-site `Sec-Fetch-Site`, or a `Host` that is not this gateway's loopback address and port gets 403. A top-level browser navigation is stopped by the session token, not by this guard.
+- **Remote model servers need TLS.** An `http://` endpoint is accepted only for loopback hosts (`127.0.0.0/8`, `::1`, `localhost`); any other `http://` URL is a policy error. Put TLS in front of a remote model server and use `https://`. Certificate verification stays on and cannot be turned off.
+- **Upstream redirects are not followed.** If the model server answers with a 3xx, the agent gets a 502 error, never the redirect or its `Location`.
+- **Conflicting framing is refused.** A request with both `Content-Length` and `Transfer-Encoding` gets 400.
 - **Latency.** The target is under 50 ms added per request on cached history, excluding optional name detection.
 
 ## Not supported
