@@ -230,7 +230,7 @@ def _cmd_setup_ner(yes: bool) -> int:
         if answer.strip().lower() != "yes":
             print("Cancelled.")
             return 1
-    return subprocess.run(cmd, check=False).returncode
+    return subprocess.run(cmd, check=False).returncode  # noqa: S603 -- argv list, no shell; cmd is the gateway-built command
 
 
 def _cmd_org(args: argparse.Namespace) -> int:

@@ -200,7 +200,7 @@ def create_app(
 
     def run_override_flow(block: BlockInfo) -> None:
         """Human flow for one override ID, on its own thread: notify, justify, authenticate, grant."""
-        assert channel is not None and block.override_id is not None
+        assert channel is not None and block.override_id is not None  # noqa: S101 -- type narrowing only; both are set before this thread starts
         oid = block.override_id
         granted = False
         try:

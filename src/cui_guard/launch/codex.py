@@ -73,8 +73,8 @@ def run_codex(args: list[str], lane: str | None, headless: bool) -> int:
         env["CUI_GUARD_TOKEN"] = s.token
         add_no_proxy(env)
         try:
-            return subprocess.run(
-                ["codex", *build_codex_args(s), *args], env=env, check=False
+            return subprocess.run(  # noqa: S603 -- argv list, no shell
+                ["codex", *build_codex_args(s), *args], env=env, check=False  # noqa: S607 -- fixed argv, no shell; codex resolved from PATH by design
             ).returncode
         except KeyboardInterrupt:
             return 130

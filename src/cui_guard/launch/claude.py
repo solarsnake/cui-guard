@@ -157,7 +157,7 @@ def _edit_deny(path: Path) -> str:
 def run_claude(args: list[str], lane: str | None, headless: bool) -> int:
     try:
         ver = subprocess.run(
-            ["claude", "--version"], capture_output=True, text=True, timeout=30, check=False
+            ["claude", "--version"], capture_output=True, text=True, timeout=30, check=False  # noqa: S607 -- fixed argv, no shell; claude resolved from PATH by design
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         raise LaunchError(f"cannot run claude --version: {e}") from e
@@ -172,8 +172,8 @@ def run_claude(args: list[str], lane: str | None, headless: bool) -> int:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(build_claude_settings(s), f)
             try:
-                return subprocess.run(
-                    ["claude", "--settings", name, *args],
+                return subprocess.run(  # noqa: S603 -- argv list, no shell
+                    ["claude", "--settings", name, *args],  # noqa: S607 -- fixed argv, no shell; claude resolved from PATH by design
                     env=build_claude_env(os.environ, s),
                     check=False,
                 ).returncode

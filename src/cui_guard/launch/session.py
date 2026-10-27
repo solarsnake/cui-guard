@@ -118,7 +118,7 @@ def resolve_credential(ep: Endpoint, env: Mapping[str, str]) -> tuple[CredMode, 
         else:
             cmd = ["secret-tool", "lookup", "service", service, "account", account]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)  # noqa: S603 -- argv list, no shell; fixed keychain tool
         except (OSError, subprocess.TimeoutExpired) as e:
             raise LaunchError(f"endpoint {ep.name}: keychain lookup failed: {e}") from e
         secret = proc.stdout.rstrip("\n")
@@ -231,7 +231,7 @@ def _read_ready(proc: subprocess.Popen) -> int:
     q: queue.Queue[str] = queue.Queue()
 
     def reader() -> None:
-        assert proc.stdout is not None
+        assert proc.stdout is not None  # noqa: S101 -- type narrowing only; stdout is a PIPE
         try:
             q.put(proc.stdout.readline())
         except (OSError, ValueError):
@@ -292,7 +292,7 @@ def start_gateway(
     )
     session = GatewaySession(0, token, session_id, lane, mode, proc, policy, agent=agent)
     try:
-        assert proc.stdin is not None
+        assert proc.stdin is not None  # noqa: S101 -- type narrowing only; stdin is a PIPE
         try:
             # One line; stdin stays open so the gateway exits if this process dies.
             proc.stdin.write(cfg.to_json() + "\n")

@@ -169,11 +169,11 @@ class MacChannel(_Base):
         self._context_factory = context_factory
 
     def _show(self, text: str) -> None:
-        subprocess.run(_osascript(_MAC_NOTIFY, text), capture_output=True, timeout=30, check=False)
+        subprocess.run(_osascript(_MAC_NOTIFY, text), capture_output=True, timeout=30, check=False)  # noqa: S603 -- argv list, no shell; fixed osascript argv
 
     def _ask(self, body: str) -> str | None:
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S603 -- argv list, no shell; fixed osascript argv
                 _osascript(_MAC_DIALOG, body),
                 capture_output=True, text=True, timeout=DIALOG_TIMEOUT_S, check=False,
             )  # fmt: skip
@@ -221,8 +221,8 @@ class MacChannel(_Base):
 
 class LinuxChannel(_Base):
     def _show(self, text: str) -> None:
-        subprocess.run(
-            ["notify-send", "cui-guard", text], capture_output=True, timeout=30, check=False
+        subprocess.run(  # noqa: S603 -- argv list, no shell; fixed notify-send argv
+            ["notify-send", "cui-guard", text], capture_output=True, timeout=30, check=False  # noqa: S607 -- notify-send resolved from PATH by design
         )
 
     def _ask(self, body: str) -> str | None:
@@ -234,7 +234,7 @@ class LinuxChannel(_Base):
         else:
             cmd = ["kdialog", "--title", "cui-guard override", "--inputbox", html.escape(body)]
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S603 -- argv list, no shell; fixed zenity/kdialog argv
                 cmd, capture_output=True, text=True, timeout=DIALOG_TIMEOUT_S, check=False
             )
         except (subprocess.TimeoutExpired, OSError):
@@ -246,7 +246,7 @@ class LinuxChannel(_Base):
     def authenticate(self, reason: str) -> bool:
         try:
             proc = subprocess.run(
-                ["pkexec", "/bin/true"], capture_output=True, timeout=AUTH_TIMEOUT_S, check=False
+                ["pkexec", "/bin/true"], capture_output=True, timeout=AUTH_TIMEOUT_S, check=False  # noqa: S607 -- pkexec resolved from PATH by design
             )
         except (subprocess.TimeoutExpired, OSError):
             return False

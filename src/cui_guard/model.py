@@ -40,7 +40,7 @@ class DetClass(StrEnum):
     CLASSIFIED_MARKING = "classified-marking"
     CUI_MARKING = "cui-marking"
     CONTROLLED_CONTENT = "controlled-content"
-    SECRET = "secret"
+    SECRET = "secret"  # noqa: S105 -- enum category label, not a credential
     IDENTIFIER = "identifier"
     OPAQUE_CONTENT = "opaque-content"
     UNPARSEABLE = "unparseable"

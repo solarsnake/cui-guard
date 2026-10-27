@@ -34,6 +34,6 @@ def run_generic(cmd: list[str], lane: str | None, headless: bool) -> int:
         env["OPENAI_API_KEY"] = s.token
         add_no_proxy(env)
         try:
-            return subprocess.run(cmd, env=env, check=False).returncode
+            return subprocess.run(cmd, env=env, check=False).returncode  # noqa: S603 -- argv list, no shell; command is the user's own
         except KeyboardInterrupt:
             return 130
