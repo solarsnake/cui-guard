@@ -21,7 +21,7 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
     - Exfiltration with no visible host anywhere in the call is not caught: a script or alias that already holds an address, or a destination supplied by an earlier call or a file.
 
     The agent's own command-approval prompts are the control there.
-  - **Over-withholding.** A tool call that names an outside host anywhere keeps all its placeholders even when the command is harmless (`git push https://github.com/... && echo person01@example.invalid`, or a file edit whose new text mentions a public URL), and four-part version numbers (`1.2.3.4`) count as IP literals.
+  - **Over-withholding.** A tool call that names an outside host anywhere keeps all its placeholders even when the command is harmless (`git push https://github.com/... && echo person01@example.invalid`, or a file edit whose new text mentions a public URL), and four-part version numbers (`1.2.3.4`) count as IP literals. Scheme URLs are read the way URL parsers read them: tabs and line breaks inside a URL are dropped and the host after the last `@` counts, so a URL that ends a line with no path (`http://db.example.mil` followed directly by `port: 5432` on the next line) is read as a longer, outside host and withholds.
 - **Images and other opaque content are replaced, not read.** On public lanes they are removed and a notice is sent instead. On approved and local lanes they are forwarded without inspection, so a secret or identifier shown inside an image is not caught there. This exception is pinned by a leak test.
 
 ## Credentials and the agent
