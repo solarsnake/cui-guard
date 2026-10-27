@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
-from urllib.parse import urlparse
+from urllib.parse import unquote_plus, urlparse
 
 import httpx
 from starlette.applications import Starlette
@@ -498,6 +498,15 @@ def create_app(
                     for i, (k, v) in enumerate(client_headers(request))
                     if k.lower() not in ("authorization", "x-api-key", "content-type")
                 ]
+                # The query string is forwarded too and cannot be rewritten: scan the raw
+                # and the percent-decoded forms like a header (a hit blocks the request).
+                query = request.url.query
+                if query:
+                    forms = dict.fromkeys((query, unquote_plus(query), unquote_plus(unquote_plus(query))))
+                    view.headers += [
+                        Segment(len(view.headers) + j, "header:query", f)
+                        for j, f in enumerate(forms)
+                    ]
                 decision = await asyncio.to_thread(pipeline.evaluate, view)
                 if decision.forward:
                     out_bytes = json.dumps(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -31,6 +32,7 @@ class Rec:
     path: str
     body: bytes
     headers: dict[str, str]
+    query: str = ""
 
 
 Responder = Callable[[str, bytes, bool], bytes | None]
@@ -165,6 +167,7 @@ class FakeUpstream:
     def __init__(self) -> None:
         self.records: list[Rec] = []
         self.responder: Callable[[str, str, bytes, bool], tuple[str, bytes]] | None = None
+        self.status = 200
         self._fmt_by_path = {p: f for f, p in PATHS.items()}
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -177,7 +180,7 @@ class FakeUpstream:
     async def _handle(self, request: Request) -> Response:
         raw = await request.body()
         path = request.url.path
-        self.records.append(Rec(path, raw, dict(request.headers)))
+        self.records.append(Rec(path, raw, dict(request.headers), request.url.query))
         fmt = self._fmt_by_path.get(path, "anthropic")
         try:
             stream = json.loads(raw).get("stream") is True
@@ -191,8 +194,8 @@ class FakeUpstream:
             async def gen():
                 yield body
 
-            return StreamingResponse(gen(), media_type=ctype)
-        return Response(body, media_type=ctype)
+            return StreamingResponse(gen(), media_type=ctype, status_code=self.status)
+        return Response(body, media_type=ctype, status_code=self.status)
 
     def start(self) -> None:
         app = Starlette(routes=[Route("/{path:path}", self._handle, methods=["POST"])])
@@ -216,9 +219,15 @@ class FakeUpstream:
     def reset(self) -> None:
         self.records.clear()
         self.responder = None
+        self.status = 200
 
     def all_bytes(self) -> bytes:
-        return b"\n".join(r.body for r in self.records)
+        """Path, query, header and body bytes of every record."""
+        parts: list[bytes] = []
+        for r in self.records:
+            heads = "\n".join(f"{k}: {v}" for k, v in r.headers.items())
+            parts += [r.path.encode(), r.query.encode(), heads.encode(), r.body]
+        return b"\n".join(parts)
 
 
 def write_user_config(
@@ -281,6 +290,35 @@ class Gateway:
         self.base = f"http://127.0.0.1:{session.port}"
         self.token = session.token
         self.client = httpx.Client(trust_env=False, timeout=30)
+        self.egress_path = dirs.root / "egress.jsonl"
+        self._out: list[str] = []
+        proc = session.proc
+        if proc.stdout is not None:
+            threading.Thread(target=self._drain, args=(proc.stdout, None), daemon=True).start()
+        if proc.stderr is not None:
+            # Record stderr and relay it to ours, so tests that watch fd 2 still see it.
+            threading.Thread(target=self._drain, args=(proc.stderr, 2), daemon=True).start()
+
+    def _drain(self, stream, relay_fd: int | None) -> None:
+        try:
+            for line in stream:
+                self._out.append(line)
+                if relay_fd is not None:
+                    os.write(relay_fd, line.encode())
+        except (OSError, ValueError):
+            pass
+
+    def egress_log(self) -> list[dict]:
+        """Every name lookup and socket connect the gateway process made."""
+        if not self.egress_path.exists():
+            return []
+        lines = self.egress_path.read_text(encoding="utf-8").splitlines()
+        return [json.loads(x) for x in lines if x.strip()]
+
+    def output(self) -> str:
+        """Captured stdout and stderr of the gateway process."""
+        time.sleep(0.2)  # let the drain thread catch up
+        return "".join(self._out)
 
     def post(self, path: str, body: dict | bytes, token: str | None = "", headers=None):
         """POST to the gateway. token "" means the real token, None means no token header."""
@@ -307,10 +345,20 @@ def launch_gateway(
     import pytest
 
     write_user_config(dirs.config, upstream_url, trust, credential, extra_config)
-    env = dirs.env(extra_env)
+    hook = str(Path(__file__).resolve().parent / "egress_hook")
+    base_env = dict(os.environ)
+    path = hook + (os.pathsep + base_env["PYTHONPATH"] if base_env.get("PYTHONPATH") else "")
+    env = dirs.env({"PYTHONPATH": path, "CUI_GUARD_EGRESS_LOG": str(dirs.root / "egress.jsonl"),
+                    **(extra_env or {})})  # fmt: skip
+    real_popen = subprocess.Popen
+
+    def popen_with_stderr(*args, **kwargs):
+        return real_popen(*args, stderr=subprocess.PIPE, **kwargs)
+
     with pytest.MonkeyPatch.context() as mp:
         for k in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
             mp.setenv(k, env[k])
+        mp.setattr(session_mod.subprocess, "Popen", popen_with_stderr)
         mp.setattr(loader, "org_policy_path", lambda: dirs.root / "no-org-policy.toml")
         # A user-defined default lane is a loosening, so every launch needs approval:
         # approve as the human would, then run the gateway headless on that approval.
