@@ -16,7 +16,7 @@ from cui_guard.adapters.openai_responses import (
 from cui_guard.adapters.sse import SSEEvent
 from cui_guard.pipeline import Decision, RequestView
 from cui_guard.pseudo.mapper import SessionMap
-from cui_guard.pseudo.stream import ArgsBuffer, TextHoldback
+from cui_guard.pseudo.stream import ArgsBuffer, TextHoldback, rehydrate_call_fields
 
 _UNTOUCHED_KEYS = frozenset(
     {
@@ -157,6 +157,37 @@ class _ChatWalker(OpenAIWalker):
 
 
 _FC = -1  # tool index used for the legacy delta.function_call
+_CALL_IDS = frozenset({"id", "index", "type"})
+
+
+def _rehydrate_call(tc: Any, smap: SessionMap) -> Any:
+    """One `tool_calls` entry, decided as one call. `function`/`custom` keep their `name`;
+    any other shape is taken whole as a call (fail closed)."""
+    if not isinstance(tc, dict):
+        return rehydrate_tree(tc, smap)
+    t = tc.get("type")
+    body = tc.get(t) if isinstance(t, str) else None
+    if isinstance(body, dict):
+        rest = {k: v for k, v in body.items() if k != "name"}
+        return {**tc, t: {**body, **rehydrate_call_fields(rest, smap)}}
+    rest = {k: v for k, v in tc.items() if k not in _CALL_IDS}
+    return {**tc, **rehydrate_call_fields(rest, smap)}
+
+
+def rehydrate_message(msg: Any, smap: SessionMap) -> Any:
+    """Content and refusals are text; each tool call is egress-checked as one call."""
+    if not isinstance(msg, dict):
+        return rehydrate_tree(msg, smap)
+    out = {}
+    for k, v in msg.items():
+        if k == "tool_calls" and isinstance(v, list):
+            out[k] = [_rehydrate_call(tc, smap) for tc in v]
+        elif k == "function_call" and isinstance(v, dict):
+            rest = {kk: vv for kk, vv in v.items() if kk != "name"}
+            out[k] = {**v, **rehydrate_call_fields(rest, smap)}
+        else:
+            out[k] = rehydrate_tree(v, smap, k)
+    return out
 
 
 class _ChatStream:
@@ -166,6 +197,7 @@ class _ChatStream:
         self._refusal: dict[int, TextHoldback] = {}
         self._calls: dict[tuple[int, int], ArgsBuffer] = {}
         self._has_args: set[tuple[int, int]] = set()
+        self._custom: dict[tuple[int, int], list[str]] = {}  # custom tool input fragments
         self._tmpl: dict[str, Any] = {}
         self._leftover = 0
         self.notes: list[str] = []
@@ -181,6 +213,7 @@ class _ChatStream:
         """True while text is held back or tool-call arguments are buffered."""
         return (
             bool(self._has_args)
+            or any(any(p) for p in self._custom.values())
             or any(hb._pending for hb in self._text.values())
             or any(hb._pending for hb in self._refusal.values())
         )
@@ -264,6 +297,14 @@ class _ChatStream:
                     fn["arguments"] = ""
                     if set(tc) <= {"index", "function"} and set(fn) <= {"arguments"}:
                         continue  # a bare argument fragment, re-emitted whole later
+                cu = tc.get("custom")
+                if isinstance(cu, dict) and "input" in cu:
+                    frag = cu["input"]
+                    key = (ci, tc.get("index", 0))
+                    self._custom.setdefault(key, []).append(frag if isinstance(frag, str) else "")
+                    cu["input"] = ""
+                    if set(tc) <= {"index", "custom"} and set(cu) <= {"input"}:
+                        continue  # a bare input fragment, re-emitted whole later
                 kept.append(tc)
             if kept:
                 delta["tool_calls"] = kept
@@ -280,6 +321,13 @@ class _ChatStream:
 
     def _emit_calls(self, ci: int) -> list[SSEEvent]:
         delta: dict[str, Any] = {}
+        for key in sorted(k for k in self._custom if k[0] == ci):
+            text = "".join(self._custom.pop(key))
+            if not text:
+                continue
+            full = self._smap.rehydrate_tool(text)  # the whole input is the call
+            self._count(full)
+            delta.setdefault("tool_calls", []).append({"index": key[1], "custom": {"input": full}})
         for key in sorted(k for k in self._calls if k[0] == ci):
             buf = self._calls.pop(key)
             if key not in self._has_args:
@@ -306,10 +354,11 @@ class _ChatStream:
                     self._count(tail)
                     out.append(self._chunk({"index": ci, "delta": {key: tail}, "finish_reason": None}))
             store.clear()
-        if self._calls:
-            self.notes.append(f"incomplete_tool_blocks={len(self._calls)}")
+        if self._calls or self._custom:
+            self.notes.append(f"incomplete_tool_blocks={len(self._calls) + len(self._custom)}")
         self._calls.clear()  # incomplete tool JSON is never forwarded
         self._has_args.clear()
+        self._custom.clear()
         return out
 
 
@@ -334,7 +383,7 @@ class OpenAIChatAdapter:
         if isinstance(choices, list):
             for ch in choices:
                 if isinstance(ch, dict) and "message" in ch:
-                    ch["message"] = rehydrate_tree(ch["message"], smap)
+                    ch["message"] = rehydrate_message(ch["message"], smap)
         return new
 
     def stream_rewriter(self, smap: SessionMap) -> _ChatStream:

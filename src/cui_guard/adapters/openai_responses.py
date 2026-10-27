@@ -10,12 +10,7 @@ from cui_guard.adapters.anthropic import _Walker
 from cui_guard.adapters.sse import SSEEvent
 from cui_guard.pipeline import Decision, RequestView
 from cui_guard.pseudo.mapper import SessionMap
-from cui_guard.pseudo.stream import (
-    ArgsBuffer,
-    TextHoldback,
-    rehydrate_json_text,
-    rehydrate_tool_call,
-)
+from cui_guard.pseudo.stream import ArgsBuffer, TextHoldback, rehydrate_call_fields
 
 _UNTOUCHED_KEYS = frozenset(
     {
@@ -225,51 +220,59 @@ class OpenAIWalker(_Walker):
             self._leaves(k, body, k)
 
 
-# Output items the client executes, and the field that carries what it runs. That field is one
-# tool call with one egress decision for all its strings (`arguments` is, wherever it appears).
-_TOOL_FIELDS = {
-    "custom_tool_call": "input",
-    "local_shell_call": "action",
-    "shell_call": "action",
-    "computer_call": "action",
-}
+# Fields of a tool-call output item that identify it rather than say what it runs.
+_CALL_IDS = frozenset({"id", "call_id", "type", "status", "name", "encrypted_content"})
 
 
-def rehydrate_args(text: str, smap: SessionMap) -> str:
-    """Rehydrate tool-call arguments; malformed JSON falls back to whole-string rehydration."""
-    try:
-        return rehydrate_json_text(text, smap, tool=True)
-    except ValueError:
-        return smap.rehydrate_tool(text)
+def rehydrate_args(args: Any, smap: SessionMap) -> Any:
+    """Rehydrate one call's arguments (JSON text, malformed text or an object) as one call."""
+    return rehydrate_call_fields({"arguments": args}, smap)["arguments"]
 
 
 def finish_args(buf: ArgsBuffer, smap: SessionMap) -> str:
     return rehydrate_args("".join(buf._parts), smap)
 
 
+def rehydrate_item(item: Any, smap: SessionMap) -> Any:
+    """Rehydrate one output item. Messages are text; reasoning is untouched; every other item
+    (`function_call`, `custom_tool_call`, `*_call`, and any type not known yet) is one tool
+    call whose fields share a single egress decision. Unknown types fail closed that way."""
+    if not isinstance(item, dict):
+        return rehydrate_tree(item, smap)
+    t = item.get("type")
+    if t == "reasoning":
+        return item
+    if t == "message" or (t is None and "role" in item):
+        return rehydrate_tree(item, smap)
+    rest = {k: v for k, v in item.items() if k not in _CALL_IDS}
+    return {**item, **rehydrate_call_fields(rest, smap)}
+
+
 def rehydrate_tree(obj: Any, smap: SessionMap, key: str | None = None) -> Any:
     """Rehydrate string values; reasoning items and encrypted_content stay untouched.
 
-    Tool-call input is decided once per call: if any of its strings names an outside host,
-    all of its placeholders are withheld.
+    `arguments` (text or object) and the items of an `output` list are tool calls, decided
+    once per call: if any of a call's strings names an outside host, all its placeholders
+    are withheld.
     """
+    if key == "arguments" and not (isinstance(obj, str) and not obj.strip()):
+        return rehydrate_args(obj, smap)
+    if key == "output" and isinstance(obj, list):
+        return [rehydrate_item(v, smap) for v in obj]
     if isinstance(obj, str):
-        if key == "arguments" and obj.strip():
-            return rehydrate_args(obj, smap)
         return smap.rehydrate(obj)
     if isinstance(obj, list):
         return [rehydrate_tree(v, smap) for v in obj]
     if isinstance(obj, dict):
-        if obj.get("type") == "reasoning":
-            return obj
         t = obj.get("type")
-        field = _TOOL_FIELDS.get(t) if isinstance(t, str) else None
+        if t == "reasoning":
+            return obj
+        if isinstance(t, str) and t.endswith("_call"):
+            return rehydrate_item(obj, smap)  # a tool call wherever it appears
         return {
-            k: v if k == "encrypted_content"
-            else rehydrate_tool_call(v, smap) if k == field
-            else rehydrate_tree(v, smap, k)
+            k: v if k == "encrypted_content" else rehydrate_tree(v, smap, k)
             for k, v in obj.items()
-        }  # fmt: skip
+        }
     return obj
 
 
@@ -360,7 +363,7 @@ class _ResponsesStream:
             if t.endswith("done") and isinstance(item, dict):
                 out = self._flush(lambda k: k[0] == item.get("id"))
             if "item" in data:
-                data["item"] = rehydrate_tree(data["item"], self._smap)
+                data["item"] = rehydrate_item(data["item"], self._smap)
             return [*out, SSEEvent(ev.event, dump(data))]
         if t in ("response.content_part.added", "response.content_part.done"):
             out = []
@@ -457,7 +460,7 @@ class OpenAIResponsesAdapter:
     def rehydrate_response(self, body: dict, smap: SessionMap) -> dict:
         new = copy.deepcopy(body)
         if "output" in new:
-            new["output"] = rehydrate_tree(new["output"], smap)
+            new["output"] = rehydrate_tree(new["output"], smap, "output")
         return new
 
     def stream_rewriter(self, smap: SessionMap) -> _ResponsesStream:

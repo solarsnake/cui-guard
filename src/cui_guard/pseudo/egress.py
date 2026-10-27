@@ -34,19 +34,19 @@ COMMON_TLDS = frozenset(
         "digital", "media", "studio", "design", "art", "one", "global", "group", "company",
         "center", "zone", "team", "new",
         # country codes
-        "ad", "ae", "af", "ag", "al", "ao", "aq", "ar", "au", "aw", "ax", "az", "ba", "bb", "bd",
-        "be", "bf", "bg", "bh", "bi", "bj", "bm", "bn", "bo", "br", "bt", "bw", "by", "bz", "ca",
-        "cd", "cg", "ch", "ci", "ck", "cm", "cn", "co", "cv", "cw", "cx", "cy", "cz", "de", "dj",
+        "ad", "ae", "af", "ag", "al", "ao", "aq", "ar", "as", "au", "aw", "ax", "az", "ba", "bb", "bd",
+        "be", "bf", "bg", "bh", "bi", "bj", "bm", "bn", "bo", "bq", "br", "bs", "bt", "bw", "by", "bz", "ca",
+        "cd", "cg", "ch", "ci", "ck", "cm", "cn", "co", "cr", "cv", "cw", "cx", "cy", "cz", "de", "dj",
         "dk", "dm", "dz", "ec", "ee", "eg", "er", "es", "et", "eu", "fi", "fj", "fk", "fm", "fo",
         "fr", "ga", "gb", "ge", "gf", "gg", "gh", "gi", "gl", "gm", "gn", "gp", "gq", "gr", "gt",
         "gu", "gw", "gy", "hk", "hm", "hn", "hr", "ht", "hu", "ie", "il", "im", "io", "iq", "ir",
         "is", "it", "je", "jm", "jo", "jp", "ke", "kg", "kh", "ki", "km", "kn", "kp", "kr", "kw",
-        "ky", "kz", "lb", "lc", "li", "lk", "lr", "lt", "lu", "lv", "ma", "mc", "me", "mg",
+        "ky", "kz", "lb", "lc", "li", "lk", "lr", "ls", "lt", "lu", "lv", "ly", "ma", "mc", "me", "mf", "mg",
         "mh", "mn", "mp", "mq", "mr", "mt", "mu", "mv", "mw", "mx", "my", "mz", "na", "ne", "nf",
-        "ng", "ni", "nl", "no", "np", "nr", "nz", "om", "pa", "pe", "pf", "pg", "ph", "pk", "pn",
-        "pr", "pw", "qa", "ro", "ru", "rw", "sa", "sd", "se", "sg", "si", "sk", "sl", "sm", "sn",
-        "sr", "ss", "sx", "sy", "sz", "tc", "td", "tg", "th", "tj", "tk", "tl", "tm", "tn", "tr",
-        "tt", "tv", "tw", "tz", "ua", "ug", "uk", "us", "uy", "uz", "va", "ve", "vg", "vi", "vn",
+        "ng", "ni", "nl", "no", "np", "nr", "nu", "nz", "om", "pa", "pe", "pf", "pg", "ph", "pk", "pn",
+        "pr", "pw", "qa", "ro", "ru", "rw", "sa", "sb", "sc", "sd", "se", "sg", "si", "sk", "sl", "sm", "sn",
+        "sr", "ss", "st", "su", "sx", "sy", "sz", "tc", "td", "tg", "th", "tj", "tk", "tl", "tm", "tn", "tr",
+        "tt", "tv", "tw", "tz", "ua", "ug", "uk", "us", "uy", "uz", "va", "vc", "ve", "vg", "vi", "vn",
         "vu", "wf", "ws", "ye", "yt", "za", "zm", "zw",
     }
 )  # fmt: skip
@@ -54,8 +54,9 @@ COMMON_TLDS = frozenset(
 _LOOPBACK_NETS = (ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128"))
 # scheme://authority — the authority ends at a path, query, fragment, quote or backslash.
 _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://([^\s/?#\\'\"`<>]*)")
-# user@host, optionally followed by ':' (the scp / git form).
-_AT = re.compile(r"(?<=[\w.%+\-])@(\[[0-9A-Fa-f:.%\w]+\]|[\w\-]+(?:\.[\w\-]+)*)(:?)")
+# user@host, optionally followed by ':' (the scp / git form). Any non-space character before
+# '@' counts, so a quote or backslash (`"http://x.mil"@evil.app`) cannot hide the host.
+_AT = re.compile(r"(?<=\S)@(\[[0-9A-Fa-f:.%\w]+\]|[\w\-]+(?:\.[\w\-]+)*)(:?)")
 # A maximal dotted token: `a.b`, `x.y.z` (labels are Unicode word characters or '-').
 _DOTTED = re.compile(r"(?<![\w\-.])[\w\-]+(?:\.[\w\-]+)+(?![\w\-]|\.[\w\-])")
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")

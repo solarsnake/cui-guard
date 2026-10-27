@@ -129,6 +129,30 @@ def rehydrate_tool_call(obj: Any, smap: SessionMap) -> Any:
     return _walk(obj, smap, True, smap.tool_outbound("\n".join(_strings(obj, []))))
 
 
+def rehydrate_call_fields(
+    fields: dict, smap: SessionMap, json_keys: frozenset[str] = frozenset({"arguments"})
+) -> dict:
+    """Rehydrate the fields of one tool call with a single egress decision for all of them.
+
+    A string under a `json_keys` key that parses as JSON is decided on (and rehydrated as) its
+    parsed leaves, then serialized again; one that does not parse is taken as a plain string.
+    """
+    parsed: dict[str, Any] = {}
+    for k, v in fields.items():
+        if k in json_keys and isinstance(v, str):
+            try:
+                parsed[k] = json.loads(v)
+            except ValueError:
+                pass
+    view = {**fields, **parsed}
+    outbound = smap.tool_outbound("\n".join(_strings(view, [])))
+    out = {}
+    for k, v in view.items():
+        new = _walk(v, smap, True, outbound)
+        out[k] = json.dumps(new, ensure_ascii=False, separators=(",", ":")) if k in parsed else new
+    return out
+
+
 def rehydrate_json_text(json_text: str, smap: SessionMap, tool: bool = True) -> str:
     """Rehydrate every string value (never keys) of a JSON document; raises ValueError if invalid.
 
