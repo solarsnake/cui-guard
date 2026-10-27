@@ -36,7 +36,7 @@ from cui_guard.model import Action, DetClass, Trust
 from cui_guard.override.human import load_messages, render, warning_key
 from cui_guard.override.store import OverrideStore
 from cui_guard.pipeline import BlockInfo, Decision, Pipeline
-from cui_guard.policy.schema import EffectivePolicy, Endpoint
+from cui_guard.policy.schema import EffectivePolicy, Endpoint, is_loopback_host
 from cui_guard.pseudo.mapper import SessionMap
 
 if TYPE_CHECKING:
@@ -250,7 +250,7 @@ def create_app(
     host = (urlparse(lane.url).hostname or "").lower()
     client = httpx.AsyncClient(
         transport=transport,
-        trust_env=host not in _LOOPBACK,  # never route loopback traffic through a proxy
+        trust_env=not is_loopback_host(host),  # never route loopback traffic through a proxy
         timeout=httpx.Timeout(connect=10, read=None, write=60, pool=10),
     )
     base_url = lane.url.rstrip("/")
