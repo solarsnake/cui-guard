@@ -320,3 +320,39 @@ def test_unchanged_cache_skipped_when_map_grows_mid_evaluate():
     assert pipe.evaluate(view("plain words only")).replacements == {0: "CG_TERM_01 words only"}
     assert pipe.evaluate(view("other words")).replacements == {}
     assert len(pipe._unchanged) == 1  # a stable map still caches
+
+
+def hdr_view(**headers):
+    v = view("hello")
+    v.headers = [Segment(i, f"header:{k.replace('_', '-')}", t) for i, (k, t) in enumerate(headers.items())]
+    return v
+
+
+def test_sensitive_header_blocks_hard():
+    for name, text in (("x_note", "SECRET//NOFORN"), ("x_host", "db.example.mil")):
+        pipe, store = make()
+        d = pipe.evaluate(hdr_view(**{name: text}))
+        assert not d.forward, text
+        assert [b.rule_id for b in d.blocked] == ["header.sensitive"], text
+        b = d.blocked[0]
+        assert b.action == Action.BLOCK_HARD and b.override_id is None
+        assert b.location == f"header:{name.replace('_', '-')}"
+        assert text not in b.excerpt and store._pending == {}
+
+
+def test_clean_and_placeholder_headers_pass():
+    pipe, _ = make()
+    d = pipe.evaluate(
+        hdr_view(
+            user_agent="claude-cli/2.1.309 (external, cli)",
+            anthropic_beta="claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
+            anthropic_version="2023-06-01",
+            x_note="person01@example.invalid",
+        )
+    )
+    assert d.forward and d.replacements == {}
+
+
+def test_header_hit_allowed_on_approved_lane():
+    pipe, _ = make(Trust.APPROVED)
+    assert pipe.evaluate(hdr_view(x_host="db.example.mil")).forward

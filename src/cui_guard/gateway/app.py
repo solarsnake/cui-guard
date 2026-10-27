@@ -35,7 +35,7 @@ from cui_guard.detect.rules import load_builtin_rules
 from cui_guard.model import Action, DetClass, Trust
 from cui_guard.override.human import load_messages, render, warning_key
 from cui_guard.override.store import OverrideStore
-from cui_guard.pipeline import BlockInfo, Decision, Pipeline
+from cui_guard.pipeline import BlockInfo, Decision, Pipeline, Segment
 from cui_guard.policy.schema import EffectivePolicy, Endpoint, is_loopback_host
 from cui_guard.pseudo.mapper import SessionMap
 
@@ -355,14 +355,18 @@ def create_app(
                 return True
         return False
 
-    def upstream_headers(request: Request, adapter: Adapter) -> list[tuple[str, str]]:
+    def client_headers(request: Request) -> list[tuple[str, str]]:
+        """The client's headers that are forwarded upstream (the one filter both uses share)."""
         drop = set(_HOP_BY_HOP) | {GUARD_HEADER, "accept-encoding", "cookie", "proxy-connection"}
         # RFC 9110 7.6.1: headers named in Connection are hop-by-hop too.
         for value in request.headers.getlist("connection"):
             drop |= {t.strip().lower() for t in value.split(",") if t.strip()}
         if cfg.credential_mode != "passthrough":
             drop |= {"authorization", "x-api-key"}
-        out = [(k, v) for k, v in request.headers.items() if k.lower() not in drop]
+        return [(k, v) for k, v in request.headers.items() if k.lower() not in drop]
+
+    def upstream_headers(request: Request, adapter: Adapter) -> list[tuple[str, str]]:
+        out = client_headers(request)
         if cfg.credential_mode == "gateway" and cfg.upstream_credential:
             if adapter.format == "anthropic":
                 out.append(("x-api-key", cfg.upstream_credential))
@@ -480,6 +484,13 @@ def create_app(
                 return await blocked_response(adapter, decision, request_hash)
             try:
                 view = adapter.extract(body)
+                # Credentials and content-type are not scanned: the first belong to the
+                # client's login (or the gateway), the second is set by the gateway.
+                view.headers = [
+                    Segment(i, f"header:{k.lower()}", v)
+                    for i, (k, v) in enumerate(client_headers(request))
+                    if k.lower() not in ("authorization", "x-api-key", "content-type")
+                ]
                 decision = await asyncio.to_thread(pipeline.evaluate, view)
                 if decision.forward:
                     out_bytes = json.dumps(

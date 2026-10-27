@@ -12,7 +12,8 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **Line-start "(C) option" list items hard-block.** A list item such as `(C) option three` looks like a classified portion mark, and classified markings cannot be overridden. Reword the list item.
 - **Authority phrases can hard-block ordinary prose.** "Classified by: the committee" blocks, because the colon form is treated as a classification authority line.
 - **`fw_dump` is IPv4-only.** The firewall-dump heuristic ignores IPv6 ranges.
-- **Headers and query strings are not scanned.** Only the request body is inspected. Agent-controlled headers (for example `ANTHROPIC_CUSTOM_HEADERS`) or URL query strings could carry a value past the guard.
+- **Query strings are not scanned.** A URL query string could carry a value past the guard. Only the request body and forwarded header values are inspected.
+- **Header values are scanned, and a sensitive custom header stops every request.** The values of the headers the gateway forwards (for example those set through `ANTHROPIC_CUSTOM_HEADERS`) go through the same detectors as the body. `authorization` and `x-api-key` are not scanned, because they carry the agent's own login. If a header holds anything the lane would mask or block, every request hard-blocks (`header.sensitive`) and it cannot be overridden; remove the value from the agent's configuration. Headers cannot be rewritten, so they are never pseudonymized. The guard's own placeholders are ignored by shape.
 - **Images and other opaque content are replaced, not read.** On public lanes they are removed and a notice is sent instead. On approved and local lanes they are forwarded without inspection, so a secret or identifier shown inside an image is not caught there. This exception is pinned by a leak test.
 
 ## Credentials and the agent
