@@ -16,44 +16,38 @@ from cui_guard.detect.normalize import normalize
 if TYPE_CHECKING:
     from cui_guard.pseudo.mapper import SessionMap
 
-# Generic and country-code TLDs that a bare `name.tld` token is taken to end in. Codes that are
-# also common file extensions or code idioms are left out (`main.py`, `user.id`, `x.to(dev)`,
-# `Dockerfile.dev`, `id_rsa.pub`), as is `invalid`, the TLD of every guard placeholder. URLs,
-# `user@host` forms and IP literals count whatever their TLD.
+# TLDs that a bare `name.tld` token (no scheme, no `@`) is taken to end in: a curated list of
+# clearly-domain TLDs. Codes that are also file extensions (`main.py`, `Dockerfile.dev`) or
+# common code identifiers (`user.name`, `self.host`, `df.info()`, `obj.pk`, `self.lr`,
+# `torch.lt`, `plt.cm`) are left out, as is `invalid`, the TLD of every guard placeholder.
+# URLs with a scheme, hosts after `@` and IP literals count whatever their TLD.
 COMMON_TLDS = frozenset(
     {
         # generic
-        "com", "net", "org", "edu", "gov", "mil", "int", "info", "biz", "name", "mobi", "aero",
-        "asia", "coop", "jobs", "museum", "travel", "tel", "post", "cat", "xxx",
-        "xyz", "top", "site", "online", "club", "shop", "store", "live", "link", "click", "win",
-        "vip", "work", "icu", "buzz", "fun", "space", "website", "tech", "cloud", "life", "world",
-        "today", "email", "host", "press", "rest", "bar", "loan", "men", "date", "review",
-        "stream", "trade", "party", "racing", "science", "download", "accountant", "cricket",
-        "faith", "bid", "cyou", "monster", "sbs", "cfd", "lol", "quest", "uno", "best", "mom",
-        "guru", "page", "blog", "news", "network", "systems", "solutions", "services", "agency",
-        "digital", "media", "studio", "design", "art", "one", "global", "group", "company",
-        "center", "zone", "team", "new",
+        "com", "net", "org", "edu", "gov", "mil", "int", "biz", "xyz", "icu", "buzz", "cyou",
+        "sbs", "cfd", "mobi", "aero", "asia", "coop", "museum", "xxx", "guru", "lol", "monster",
+        "quest", "accountant", "cricket",
         # country codes
-        "ad", "ae", "af", "ag", "al", "ao", "aq", "ar", "as", "au", "aw", "ax", "az", "ba", "bb", "bd",
-        "be", "bf", "bg", "bh", "bi", "bj", "bm", "bn", "bo", "bq", "br", "bs", "bt", "bw", "by", "bz", "ca",
-        "cd", "cg", "ch", "ci", "ck", "cm", "cn", "co", "cr", "cv", "cw", "cx", "cy", "cz", "de", "dj",
-        "dk", "dm", "dz", "ec", "ee", "eg", "er", "es", "et", "eu", "fi", "fj", "fk", "fm", "fo",
-        "fr", "ga", "gb", "ge", "gf", "gg", "gh", "gi", "gl", "gm", "gn", "gp", "gq", "gr", "gt",
-        "gu", "gw", "gy", "hk", "hm", "hn", "hr", "ht", "hu", "ie", "il", "im", "io", "iq", "ir",
-        "is", "it", "je", "jm", "jo", "jp", "ke", "kg", "kh", "ki", "km", "kn", "kp", "kr", "kw",
-        "ky", "kz", "lb", "lc", "li", "lk", "lr", "ls", "lt", "lu", "lv", "ly", "ma", "mc", "me", "mf", "mg",
-        "mh", "mn", "mp", "mq", "mr", "mt", "mu", "mv", "mw", "mx", "my", "mz", "na", "ne", "nf",
-        "ng", "ni", "nl", "no", "np", "nr", "nu", "nz", "om", "pa", "pe", "pf", "pg", "ph", "pk", "pn",
-        "pr", "pw", "qa", "ro", "ru", "rw", "sa", "sb", "sc", "sd", "se", "sg", "si", "sk", "sl", "sm", "sn",
-        "sr", "ss", "st", "su", "sx", "sy", "sz", "tc", "td", "tg", "th", "tj", "tk", "tl", "tm", "tn", "tr",
-        "tt", "tv", "tw", "tz", "ua", "ug", "uk", "us", "uy", "uz", "va", "vc", "ve", "vg", "vi", "vn",
-        "vu", "wf", "ws", "ye", "yt", "za", "zm", "zw",
+        "ae", "af", "ao", "aq", "ar", "au", "aw", "az", "ba", "bd", "be", "bh", "bi", "bj", "bo",
+        "bq", "br", "bt", "bw", "by", "bz", "cd", "cg", "ch", "ck", "cn", "co", "cr", "cw", "cz",
+        "de", "dj", "dk", "dm", "ec", "ee", "eg", "er", "et", "eu", "fi", "fj", "fm", "fo", "fr",
+        "ga", "gb", "gf", "gg", "gh", "gi", "gn", "gq", "gr", "gu", "gw", "gy", "hk", "hm", "hn",
+        "hr", "ht", "hu", "ie", "il", "io", "iq", "ir", "je", "jm", "jo", "jp", "ke", "kg", "kh",
+        "ki", "km", "kn", "kr", "kw", "ky", "kz", "lb", "lc", "li", "lk", "lu", "lv", "ly", "mc",
+        "mf", "mg", "mh", "mn", "mq", "mr", "mt", "mw", "mx", "my", "mz", "na", "nf", "ng", "ni",
+        "nl", "np", "nr", "nz", "om", "pa", "pf", "pg", "ph", "pn", "pr", "qa", "ro", "ru", "rw",
+        "sa", "sb", "sg", "si", "sk", "sl", "sm", "sn", "ss", "st", "su", "sx", "sy", "sz", "tc",
+        "td", "tg", "th", "tj", "tl", "tm", "tn", "tr", "tt", "tv", "tw", "ua", "ug", "uk", "uy",
+        "uz", "va", "vc", "ve", "vg", "vi", "vn", "vu", "wf", "ye", "yt", "za", "zm", "zw",
     }
 )  # fmt: skip
 
 _LOOPBACK_NETS = (ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128"))
 # scheme://authority — the authority ends at a path, query, fragment, quote or backslash.
 _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://([^\s/?#\\'\"`<>]*)")
+# URL userinfo that holds spaces or quotes (`http://x.mil @evil.app/`): HTTP libraries take
+# the host after the last '@' before the path, so that host is the destination.
+_URL_AT = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^/?#\n]*@(\[[^\]\n]+\]|[\w\-]+(?:\.[\w\-]+)*)")
 # user@host, optionally followed by ':' (the scp / git form). Any non-space character before
 # '@' counts, so a quote or backslash (`"http://x.mil"@evil.app`) cannot hide the host.
 _AT = re.compile(r"(?<=\S)@(\[[0-9A-Fa-f:.%\w]+\]|[\w\-]+(?:\.[\w\-]+)*)(:?)")
@@ -145,6 +139,9 @@ class EgressGuard:
                 host = authority.split(":", 1)[0]
             if host:
                 yield host
+        for m in _URL_AT.finditer(text):
+            if m.group(1).strip("[]").split(".")[-1].lower() != "invalid":  # RFC 6761, as below
+                yield m.group(1)
         for m in _AT.finditer(text):
             if _at_destination(m.group(1), bool(m.group(2))):
                 yield m.group(1)
