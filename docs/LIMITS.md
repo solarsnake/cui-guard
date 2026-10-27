@@ -48,6 +48,21 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
 - **`cui-guard policy` view.** The default view does not show which layer each individual identifier literal came from. Use `--show-identifiers` only when it is safe to print them.
 - **Audit hit counts include allowed hits.** Counts in the audit log include matches that policy allowed, so a count does not mean something was blocked or replaced.
 
+### Known evasion gaps
+
+The red-team corpus (`tests/redteam`) sends obfuscated canaries through the gateway on a public lane. These forms still reach the upstream, and each is pinned as a known gap in the tests. Text that is only hidden by Unicode tricks (homoglyphs, zero-width characters, full-width forms, combining marks, non-breaking spaces) or by JSON `\u` escapes is caught. Values in tool schema descriptions, file paths and document titles are caught too.
+
+- `base64`: a value that is base64-encoded before it is sent is not decoded or detected.
+- `hex`: a value that is hex-encoded before it is sent is not decoded or detected.
+- `percent`: URL percent-encoded values (`%43%55%49...`) are not decoded.
+- `html_entity`: HTML numeric entities (`&#67;&#85;...`) are not decoded.
+- `line_wrap`: a newline inserted in the middle of a CUI marking, host, IP address, codename, person name or secret hides it. Emails, classified markings and Nessus-shaped exports are still caught.
+- `mixed_case`: markings, secrets and person-name literals match case-sensitively, so alternating-case copies are not detected.
+- `split_blocks`: a value split across two content blocks of one message is not rejoined (except emails and classified markings).
+- `split_messages`: a value split across two messages is not rejoined (same exceptions).
+- `split_tool_args`: a value split across two tool-call arguments is not rejoined (same exceptions).
+- `json_in_string`: a Nessus-shaped export serialized as a JSON string loses its line structure, so the controlled-content heuristic does not fire.
+
 ## Data on disk
 
 - **Agent transcripts stay on disk.** Claude Code and Codex write full conversation transcripts to the user's disk (for example under `~/.claude`). These hold the real values from before pseudonymization. cui-guard does not manage or encrypt them. The guard's own session map is kept in memory only.
