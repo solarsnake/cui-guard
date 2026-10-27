@@ -8,7 +8,7 @@ from typing import Any
 
 from cui_guard.adapters.anthropic import _Walker
 from cui_guard.adapters.sse import SSEEvent
-from cui_guard.pipeline import Decision, RequestView, Segment
+from cui_guard.pipeline import Decision, RequestView
 from cui_guard.pseudo.mapper import SessionMap
 from cui_guard.pseudo.stream import ArgsBuffer, TextHoldback, rehydrate_call_fields
 
@@ -145,6 +145,9 @@ class OpenAIWalker(_Walker):
             self.unparseable.append(loc)  # a non-string type is unhashable and unknown
             return
         if t in _PASSTHROUGH_ITEMS:
+            for k, v in it.items():  # never modified: everything but type and id is read-only text
+                if k != "type" and not (k == "id" and isinstance(v, str)):
+                    self._ro_leaves(f"{loc}.{k}", v)
             return
         if t == "reasoning":
             self._reasoning(loc, it)
@@ -188,21 +191,12 @@ class OpenAIWalker(_Walker):
         if t in _ITEM_KEYS:
             self._extra(loc, it, _ITEM_KEYS[t])
 
-    def _ro_leaves(self, loc: str, v: Any) -> None:
-        """Scan every string leaf of an unrecognised reasoning field, read-only."""
-        if isinstance(v, str):
-            self.readonly.append(Segment(len(self.readonly), loc, v))
-        elif isinstance(v, list):
-            for i, x in enumerate(v):
-                self._ro_leaves(f"{loc}[{i}]", x)
-        elif isinstance(v, dict):
-            for k, x in v.items():
-                self._ro_leaves(f"{loc}.{k}", x)
-
     def _reasoning(self, loc: str, it: dict) -> None:
         """Reasoning items are never modified; their summary and content text is scanned read-only."""
-        for k in it:
-            if k not in _REASONING_KEYS:
+        for k, val in it.items():
+            if k not in _REASONING_KEYS or (
+                k in ("type", "id", "status", "encrypted_content") and isinstance(val, (dict, list))
+            ):
                 self.unparseable.append(f"{loc}.{k}")
         for key in ("summary", "content"):
             parts = it.get(key)
@@ -214,9 +208,11 @@ class OpenAIWalker(_Walker):
             for j, part in enumerate(parts):
                 self._ro(f"{loc}.{key}[{j}].text", part, "text")
                 if isinstance(part, dict):
-                    for k in part:
-                        if k not in _REASONING_PART_KEYS:
-                            self._ro_leaves(f"{loc}.{key}[{j}].{k}", part[k])
+                    for k, v in part.items():
+                        if k not in _REASONING_PART_KEYS or (
+                            k == "type" and isinstance(v, (dict, list))
+                        ):
+                            self._ro_leaves(f"{loc}.{key}[{j}].{k}", v)
 
     def _tools(self, tools: Any) -> None:
         if not isinstance(tools, list):

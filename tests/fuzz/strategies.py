@@ -53,6 +53,9 @@ def seed_body(fmt: str) -> dict:
     return json.loads((FIX / _SEED_FILES[fmt]).read_text())
 
 
+REAL_VALUES = ["db.example.mil", "10.1.2.3", "projx", "TKT-1", "Jane"]  # as mapped by make_map()
+
+
 @st.composite
 def _leaf(draw: st.DrawFn) -> Any:
     n = draw(st.integers(0, 10**6))
@@ -60,6 +63,7 @@ def _leaf(draw: st.DrawFn) -> Any:
         st.one_of(
             st.text(max_size=40),
             st.just(f"CANARY-{n}-LEAF"),
+            st.sampled_from(REAL_VALUES).map(lambda v: f"connect to {v} now"),
             st.sampled_from(_TYPE_POOL),
             st.integers(-5, 5),
             st.booleans(),
@@ -105,9 +109,6 @@ _STRUCTURAL = frozenset(
 )
 
 
-_FORWARDED_TYPES = tuple({"thinking", "redacted_thinking", "reasoning", "item_reference"})
-
-
 @st.composite
 def request_bodies(draw: st.DrawFn, fmt: str) -> dict:
     """A fixture request mutated: string leaves swapped, values retyped, keys added or dropped.
@@ -126,15 +127,12 @@ def request_bodies(draw: st.DrawFn, fmt: str) -> dict:
             continue
         if op == "add_nested":
             # An unknown key (string, list or dict value) inside a known container: a block,
-            # part, item, message or tool definition. Containers whose extra keys are documented
-            # as forwarded untouched (signed or reasoning items, cache hints) are left alone.
+            # part, item, message or tool definition, signed and reference items included.
             holders = [
                 p
                 for p, v in nodes
                 if isinstance(v, dict)
                 and p[0] not in _UNTOUCHED_TOP[fmt]
-                and v.get("type") not in _FORWARDED_TYPES
-                and "cache_control" not in p
                 and "mcp_servers" not in p
             ]
             if holders:
@@ -152,7 +150,7 @@ def request_bodies(draw: st.DrawFn, fmt: str) -> dict:
         if op == "leaf":
             cands = [p for p, v in nodes if isinstance(v, str) and p[-1] not in _STRUCTURAL]
         else:
-            cands = [p for p, _ in nodes if p[-1] not in _STRUCTURAL]
+            cands = [p for p, _ in nodes]  # identifier keys too: a container there must fail closed
         if not cands:
             continue
         path = draw(st.sampled_from(cands))
@@ -161,7 +159,7 @@ def request_bodies(draw: st.DrawFn, fmt: str) -> dict:
             holder[path[-1]] = draw(_leaf())
         elif op == "retype":
             free = _FREEFORM & {k for k in path[1:] if isinstance(k, str)} or path[0] not in _HANDLED_TOP[fmt]
-            holder[path[-1]] = draw(_json_values() if free else _leaf())
+            holder[path[-1]] = draw(_json_values() if free or path[-1] in _STRUCTURAL else _leaf())
         elif isinstance(holder, dict):
             del holder[path[-1]]
         else:
@@ -195,15 +193,20 @@ def string_leaves(obj: Any, fmt: str = "", path: tuple = ()) -> Iterator[tuple[t
 def loc_of(path: tuple) -> str:
     """The adapters' location string for a path, e.g. messages[0].content[1]."""
     out = ""
-    for k in path:
-        out += f"[{k}]" if isinstance(k, int) else (f".{k}" if out else str(k))
+    for i, k in enumerate(path):
+        out += f"[{k}]" if isinstance(k, int) else (f".{k}" if i else str(k))
     return out
 
 
-# Wire-format discriminators and identifiers: never user text, never scanned.
+# Wire-format discriminators and identifiers: scalars that are never user text, never scanned.
 _IDENTIFIERS = frozenset(
     {"type", "role", "id", "name", "tool_use_id", "tool_call_id", "call_id", "media_type", "status", "index", "signature"}
 )
+_FREE_TEXT = frozenset({"input", "metadata", "arguments"})  # contents are user data, key names included
+_SCHEMA_KEYS = frozenset({"input_schema", "parameters", "schema"})
+_CACHE_SKIP = _an._CACHE_SKIP
+
+
 def untouched(fmt: str, path: tuple, opaque_locs: tuple[str, ...] = ()) -> bool:
     """True when the adapter documents this leaf as not scanned.
 
@@ -218,33 +221,46 @@ def untouched(fmt: str, path: tuple, opaque_locs: tuple[str, ...] = ()) -> bool:
     loc = loc_of(path)
     if any(loc == o or loc.startswith((o + ".", o + "[")) for o in opaque_locs):
         return True
-    keys = [k for k in path if isinstance(k, str)]
-    last = path[-1]
     if path[0] not in _HANDLED_TOP[fmt]:
         return False  # unknown top-level keys are scanned whole
+    tail = path[1:]
+    keys = [k for k in tail if isinstance(k, str)]
+    last = path[-1]
+    if _SCHEMA_KEYS & set(keys):
+        # Only schema keywords are structural, and not when they are property names.
+        i = max(i for i, k in enumerate(path) if isinstance(k, str))
+        parent = path[i - 1] if i > 0 else None
+        return path[i] in _an._SCHEMA_STRUCTURAL and parent not in _an._SCHEMA_NAME_MAPS
+    if _FREE_TEXT & set(keys):
+        return False
     if last in _IDENTIFIERS:
         return True
+    def direct(container: str) -> bool:
+        """The leaf is a scalar key of the container's own dict (or of one of its list items)."""
+        parent = path[-2] if len(path) > 1 else None
+        if isinstance(parent, int):
+            parent = path[-3] if len(path) > 2 else None
+        return parent == container
+
+    if direct("cache_control") and last in _CACHE_SKIP:
+        return True
+    if direct("citations") and last in _an._CITATION_SKIP:
+        return True
     if fmt == "anthropic":
-        if "cache_control" in keys:
-            return True  # a cache hint, forwarded as is
-        if "input_schema" in keys and any(k in _an._SCHEMA_STRUCTURAL for k in keys):
-            return True  # includes list entries such as required[0]
-        return last in _an._CITATION_SKIP and "citations" in keys
+        return False
     # OpenAI wire formats
-    if "annotations" in keys and last in _rs._ANNOTATION_SKIP:
+    if direct("annotations") and last in _rs._ANNOTATION_SKIP:
         return True
-    if "format" in keys and last in _rs._FORMAT_SKIP:
+    if direct("format") and last in _rs._FORMAT_SKIP:
         return True
-    if "action" in keys and last in _rs._ACTION_SKIP:
+    if direct("action") and last in _rs._ACTION_SKIP:
         return True
-    if last in _rs._OUTCOME_SKIP and "output" in keys:
+    if last in _rs._OUTCOME_SKIP and direct("output"):
         return True
-    if ("parameters" in keys or "schema" in keys) and any(k in _an._SCHEMA_STRUCTURAL for k in keys):
-        return True
-    if "encrypted_content" in keys and "encrypted_content" in _rs._REASONING_KEYS:
+    if last == "encrypted_content" and last in _rs._REASONING_KEYS:
         return True  # reasoning items are forwarded untouched
     if fmt == "openai-chat":
-        if last in _chat._MESSAGE_SKIP - {"content", "tool_calls", "function_call"} and path[0] == "messages":
+        if path[0] == "messages" and len(path) == 3 and last in _chat._MESSAGE_SKIP - {"content", "tool_calls", "function_call", "audio"}:
             return True
         if "audio" in keys and last in _chat._AUDIO_SKIP:
             return True

@@ -37,3 +37,16 @@ def test_normalize_offset_map_valid(text):
     assert all(0 <= i <= len(text) for i in imap)
     assert all(a <= b for a, b in itertools.pairwise(imap))
     assert all(i < len(text) for i in imap[:-1])
+
+
+def test_echo_masking_of_a_separator_value_fails_safe():
+    # The minimal example behind the narrowed round-trip property: "\n" is itself a mapped value,
+    # so every newline in the text is masked and the placeholders end up adjacent. Adjacent
+    # placeholders are not rehydrated (boundary-aware pattern). That fails safe: no real value
+    # leaves, and the placeholders stay in the text.
+    text = "\n\n\n"
+    smap = SessionMap()
+    masked = smap.pseudonymize(text, [Hit("fuzz", DetClass.IDENTIFIER, 1, 2, "\n", "email")])
+    assert "\n" not in masked
+    assert masked.count("person01@example.invalid") == 3
+    assert smap.rehydrate(masked) == masked

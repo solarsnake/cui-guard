@@ -35,10 +35,10 @@ _AUDIO_SKIP = frozenset({"id"})
 # leaves scanned (see _Walker._extra).
 _CPART_TEXT_KEYS = frozenset({"type", "text"})
 _CPART_REFUSAL_KEYS = frozenset({"type", "refusal"})
-_TOOL_CALL_KEYS = frozenset({"id", "index", "type", "function", "custom"})
+_TOOL_CALL_KEYS = frozenset({"id", "index", "type"})  # plus the declared type's own key
 _FN_CALL_KEYS = frozenset({"name", "arguments"})
 _CUSTOM_CALL_KEYS = frozenset({"name", "input"})
-_TOOL_ENTRY_KEYS = frozenset({"type", "function", "custom"})
+_TOOL_ENTRY_KEYS = frozenset({"type"})  # plus the declared type's own key
 _FN_DEF_KEYS = frozenset({"name", "description", "parameters"})
 _TEMPLATE_KEYS = ("id", "object", "created", "model", "system_fingerprint", "service_tier")
 
@@ -100,7 +100,7 @@ class _ChatWalker(OpenAIWalker):
                 else:
                     self.unparseable.append(cl)
                 if isinstance(tc, dict):
-                    self._extra(cl, tc, _TOOL_CALL_KEYS)
+                    self._extra(cl, tc, _TOOL_CALL_KEYS | ({t} if isinstance(t, str) else set()))
                     if isinstance(fn, dict):
                         self._extra(f"{cl}.{t}", fn, _FN_CALL_KEYS if t == "function" else _CUSTOM_CALL_KEYS)
         legacy = m.get("function_call")
@@ -115,6 +115,8 @@ class _ChatWalker(OpenAIWalker):
         for k in list(m):
             if k not in _MESSAGE_SKIP:
                 self._leaves(f"{loc}.{k}", m, k)
+            elif k in ("role", "tool_call_id", "id") and isinstance(m[k], (dict, list)):
+                self.unparseable.append(f"{loc}.{k}")
 
     def _tools(self, tools: Any) -> None:
         if not isinstance(tools, list):
@@ -134,13 +136,14 @@ class _ChatWalker(OpenAIWalker):
                     self._function_def(f"{loc}.function", fn)
                 else:
                     self.unparseable.append(loc)
+                self._extra(loc, tool, _TOOL_ENTRY_KEYS | {"function"})
             elif t == "custom" and isinstance(tool.get("custom"), dict):
                 self.custom_tool(f"{loc}.custom", tool["custom"])
+                self._extra(loc, tool, _TOOL_ENTRY_KEYS | {"custom"})
             elif t != "custom" and self._opq(loc, "server_tool"):
                 continue
             elif t == "custom":
                 self.unparseable.append(loc)
-            self._extra(loc, tool, _TOOL_ENTRY_KEYS)
             keep.append(tool)
         if self.decision is not None:
             tools[:] = keep

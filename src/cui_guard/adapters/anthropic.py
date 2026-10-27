@@ -34,6 +34,11 @@ _SCHEMA_STRUCTURAL = frozenset({"type", "required", "$ref", "$schema", "format",
 _SCHEMA_NAME_MAPS = frozenset({"properties", "$defs", "definitions", "patternProperties"})
 _CITATION_SKIP = frozenset({"type", "url", "encrypted_index", "file_id"})
 _NO_KEYS: frozenset[str] = frozenset()
+_CACHE_SKIP = frozenset({"type", "ttl"})
+# Keys that only identify a container; their value must be a scalar.
+_IDENT_KEYS = frozenset(
+    {"type", "role", "id", "name", "tool_use_id", "tool_call_id", "call_id", "status", "index", "media_type"}
+)
 # Keys each container handles itself or that only identify it. Any other key is unknown to us
 # (a provider may add fields), so its string leaves are scanned like any other text.
 _MESSAGE_KEYS = frozenset({"role", "content"})
@@ -45,6 +50,13 @@ _DOCUMENT_KEYS = frozenset({"type", "title", "context", "source", "cache_control
 _DOC_TEXT_KEYS = frozenset({"type", "data", "media_type"})
 _DOC_CONTENT_KEYS = frozenset({"type", "content"})
 _TOOL_KEYS = frozenset({"type", "name", "description", "input_schema", "cache_control"})
+
+
+def _flat(v: Any) -> bool:
+    """A scalar, or a list of scalars (e.g. `"type": ["string", "null"]`)."""
+    return not isinstance(v, dict) and not (
+        isinstance(v, list) and any(isinstance(x, (dict, list)) for x in v)
+    )
 
 
 def _notice(kind: str) -> dict:
@@ -97,14 +109,40 @@ class _Walker:
         elif isinstance(v, dict):
             for k in list(v):
                 # A skipped key is an identifier (a scalar); a container under it is scanned.
+                # Skip keys apply to the container's own keys only, never to nested ones.
                 if k not in skip or isinstance(v[k], (dict, list)):
-                    self._leaves(f"{loc}.{k}", v, k, skip)
+                    self._leaves(f"{loc}.{k}", v, k, _NO_KEYS)
 
     def _extra(self, loc: str, holder: dict, known: frozenset[str]) -> None:
-        """Scan the string leaves of every key a container does not recognise."""
+        """Scan the string leaves of every key a container does not recognise.
+
+        A recognised identifier key must hold a scalar (`is_error` a bool, `cache_control` a
+        dict whose leaves are scanned); anything else is unparseable, never forwarded unscanned.
+        """
         for k in list(holder):
+            v = holder[k]
             if k not in known:
                 self._leaves(f"{loc}.{k}", holder, k)
+            elif k == "cache_control" and v is not None:
+                if isinstance(v, dict):
+                    self._leaves(f"{loc}.{k}", holder, k, _CACHE_SKIP)
+                else:
+                    self.unparseable.append(f"{loc}.{k}")
+            elif (k in _IDENT_KEYS and isinstance(v, (dict, list))) or (
+                k == "is_error" and v is not None and not isinstance(v, bool)
+            ):
+                self.unparseable.append(f"{loc}.{k}")
+
+    def _ro_leaves(self, loc: str, v: Any) -> None:
+        """Scan every string leaf of an unrecognised field of a never-modified item, read-only."""
+        if isinstance(v, str):
+            self.readonly.append(Segment(len(self.readonly), loc, v))
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                self._ro_leaves(f"{loc}[{i}]", x)
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                self._ro_leaves(f"{loc}.{k}", x)
 
     def _opt_seg(self, loc: str, holder: dict, key: str) -> None:
         if holder.get(key) is not None:
@@ -120,8 +158,8 @@ class _Walker:
                 self._schema(f"{loc}[{i}]", v, i)
         elif isinstance(v, dict):
             for k in list(v):
-                if not names and k in _SCHEMA_STRUCTURAL:
-                    continue
+                if not names and k in _SCHEMA_STRUCTURAL and _flat(v[k]):
+                    continue  # a keyword (type, required, ...); a schema under it is scanned
                 self._schema(f"{loc}.{k}", v, k, not names and k in _SCHEMA_NAME_MAPS)
 
     # -- blocks -----------------------------------------------------------
@@ -145,6 +183,9 @@ class _Walker:
         if t in _PASSTHROUGH:
             text_key = _PASSTHROUGH[t]
             self._ro(f"{loc}.{text_key}", b, text_key)
+            for k, v in b.items():  # signed, never modified: everything else is read-only text
+                if k != "type" and k != text_key and not (k == "signature" and isinstance(v, str)):
+                    self._ro_leaves(f"{loc}.{k}", v)
             return
         if t == "document":
             self._document(loc, holder, i, b)
