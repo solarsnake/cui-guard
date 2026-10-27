@@ -10,7 +10,12 @@ from cui_guard.adapters.anthropic import _Walker
 from cui_guard.adapters.sse import SSEEvent
 from cui_guard.pipeline import Decision, RequestView
 from cui_guard.pseudo.mapper import SessionMap
-from cui_guard.pseudo.stream import ArgsBuffer, TextHoldback, rehydrate_json_text
+from cui_guard.pseudo.stream import (
+    ArgsBuffer,
+    TextHoldback,
+    rehydrate_json_text,
+    rehydrate_tool_call,
+)
 
 _UNTOUCHED_KEYS = frozenset(
     {
@@ -220,8 +225,8 @@ class OpenAIWalker(_Walker):
             self._leaves(k, body, k)
 
 
-# Output items the client executes, and the field that carries what it runs. Every string in
-# that field takes the egress-checked tool path (`arguments` does wherever it appears).
+# Output items the client executes, and the field that carries what it runs. That field is one
+# tool call with one egress decision for all its strings (`arguments` is, wherever it appears).
 _TOOL_FIELDS = {
     "custom_tool_call": "input",
     "local_shell_call": "action",
@@ -242,27 +247,29 @@ def finish_args(buf: ArgsBuffer, smap: SessionMap) -> str:
     return rehydrate_args("".join(buf._parts), smap)
 
 
-def rehydrate_tree(obj: Any, smap: SessionMap, key: str | None = None, tool: bool = False) -> Any:
+def rehydrate_tree(obj: Any, smap: SessionMap, key: str | None = None) -> Any:
     """Rehydrate string values; reasoning items and encrypted_content stay untouched.
 
-    Tool-call input (`tool`) is egress-checked per string: one naming an outside host keeps
-    its placeholders.
+    Tool-call input is decided once per call: if any of its strings names an outside host,
+    all of its placeholders are withheld.
     """
     if isinstance(obj, str):
         if key == "arguments" and obj.strip():
             return rehydrate_args(obj, smap)
-        return smap.rehydrate_tool(obj) if tool else smap.rehydrate(obj)
+        return smap.rehydrate(obj)
     if isinstance(obj, list):
-        return [rehydrate_tree(v, smap, tool=tool) for v in obj]
+        return [rehydrate_tree(v, smap) for v in obj]
     if isinstance(obj, dict):
         if obj.get("type") == "reasoning":
             return obj
         t = obj.get("type")
         field = _TOOL_FIELDS.get(t) if isinstance(t, str) else None
         return {
-            k: v if k == "encrypted_content" else rehydrate_tree(v, smap, k, tool or k == field)
+            k: v if k == "encrypted_content"
+            else rehydrate_tool_call(v, smap) if k == field
+            else rehydrate_tree(v, smap, k)
             for k, v in obj.items()
-        }
+        }  # fmt: skip
     return obj
 
 

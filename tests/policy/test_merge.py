@@ -305,9 +305,15 @@ def test_unknown_action_key_rejected():
     assert pol.actions[("u.pat", Trust.PUBLIC)] is B
 
 
-def test_egress_rehydration_strictest_and_round_trips():
-    assert merged().egress_rehydration == "withhold"
-    assert merged(user={"egress_rehydration": "allow"}).egress_rehydration == "withhold"
+def test_egress_rehydration_builtin_is_default_and_round_trips():
+    assert (merged().egress_rehydration, merged().provenance["egress_rehydration"]) == (
+        "withhold", "builtin",
+    )  # fmt: skip
+    user_allow = merged(user={"egress_rehydration": "allow"})
+    assert (user_allow.egress_rehydration, user_allow.provenance["egress_rehydration"]) == (
+        "allow", "user",
+    )  # fmt: skip
+    assert merged(org={"egress_rehydration": "allow"}).egress_rehydration == "allow"
     pol = merged(user={"egress_rehydration": "allow"}, org={"egress_rehydration": "withhold"})
     assert (pol.egress_rehydration, pol.provenance["egress_rehydration"]) == ("withhold", "org")
     again = EffectivePolicy.from_dict(json.loads(json.dumps(pol.to_dict())))

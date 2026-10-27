@@ -121,12 +121,21 @@ class SessionMap:
             self._record(text)
             return PLACEHOLDER_RE.sub(lambda m: self._rev.get(m.group(0), m.group(0)), text)
 
-    def rehydrate_tool(self, text: str) -> str:
-        """Rehydrate a string bound for a tool call, unless it names an outside host."""
+    def tool_outbound(self, context: str) -> bool:
+        """True when placeholders in a tool call described by `context` must be withheld."""
         g = self.egress
-        if g is None or g.mode != "withhold" or not PLACEHOLDER_RE.search(text):
-            return self.rehydrate(text)
-        if not g.is_outbound(text, self):
+        if g is None or g.mode != "withhold" or not PLACEHOLDER_RE.search(context):
+            return False
+        return g.is_outbound(context, self)
+
+    def rehydrate_tool(self, text: str, outbound: bool | None = None) -> str:
+        """Rehydrate a string bound for a tool call, unless the call names an outside host.
+
+        `outbound` is the decision made once for the whole call; None decides on `text` alone.
+        """
+        if outbound is None:
+            outbound = self.tool_outbound(text)
+        if not outbound or not PLACEHOLDER_RE.search(text):
             return self.rehydrate(text)
         with self._lock:
             self._record(text)

