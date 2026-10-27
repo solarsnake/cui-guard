@@ -31,6 +31,15 @@ _MESSAGE_SKIP = frozenset(
     {"role", "tool_call_id", "id", "audio", "content", "tool_calls", "function_call"}
 )
 _AUDIO_SKIP = frozenset({"id"})
+# Keys each container handles itself or that only identify it; any other key has its string
+# leaves scanned (see _Walker._extra).
+_CPART_TEXT_KEYS = frozenset({"type", "text"})
+_CPART_REFUSAL_KEYS = frozenset({"type", "refusal"})
+_TOOL_CALL_KEYS = frozenset({"id", "index", "type", "function", "custom"})
+_FN_CALL_KEYS = frozenset({"name", "arguments"})
+_CUSTOM_CALL_KEYS = frozenset({"name", "input"})
+_TOOL_ENTRY_KEYS = frozenset({"type", "function", "custom"})
+_FN_DEF_KEYS = frozenset({"name", "description", "parameters"})
 _TEMPLATE_KEYS = ("id", "object", "created", "model", "system_fingerprint", "service_tier")
 
 
@@ -51,8 +60,10 @@ class _ChatWalker(OpenAIWalker):
         kind: str | None = None
         if t == "text" and "text" in p:
             self._seg(f"{loc}.text", p, "text")
+            self._extra(loc, p, _CPART_TEXT_KEYS)
         elif t == "refusal" and "refusal" in p:
             self._seg(f"{loc}.refusal", p, "refusal")
+            self._extra(loc, p, _CPART_REFUSAL_KEYS)
         elif t == "image_url":
             kind = "image"
         elif t == "input_audio":
@@ -88,10 +99,15 @@ class _ChatWalker(OpenAIWalker):
                     self._seg(f"{cl}.custom.input", fn, "input")
                 else:
                     self.unparseable.append(cl)
+                if isinstance(tc, dict):
+                    self._extra(cl, tc, _TOOL_CALL_KEYS)
+                    if isinstance(fn, dict):
+                        self._extra(f"{cl}.{t}", fn, _FN_CALL_KEYS if t == "function" else _CUSTOM_CALL_KEYS)
         legacy = m.get("function_call")
         if legacy is not None:
             if isinstance(legacy, dict) and "arguments" in legacy:
                 self.args(f"{loc}.function_call.arguments", legacy, "arguments")
+                self._extra(f"{loc}.function_call", legacy, _FN_CALL_KEYS)
             else:
                 self.unparseable.append(f"{loc}.function_call")
         if "audio" in m:
@@ -124,6 +140,7 @@ class _ChatWalker(OpenAIWalker):
                 continue
             elif t == "custom":
                 self.unparseable.append(loc)
+            self._extra(loc, tool, _TOOL_ENTRY_KEYS)
             keep.append(tool)
         if self.decision is not None:
             tools[:] = keep
@@ -133,6 +150,7 @@ class _ChatWalker(OpenAIWalker):
             self._seg(f"{loc}.description", fn, "description")
         if "parameters" in fn:
             self._schema(f"{loc}.parameters", fn, "parameters")
+        self._extra(loc, fn, _FN_DEF_KEYS)
 
     def walk(self, body: dict) -> None:
         msgs = body.get("messages")

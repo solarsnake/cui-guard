@@ -8,7 +8,7 @@ from typing import Any
 
 from cui_guard.adapters.anthropic import _Walker
 from cui_guard.adapters.sse import SSEEvent
-from cui_guard.pipeline import Decision, RequestView
+from cui_guard.pipeline import Decision, RequestView, Segment
 from cui_guard.pseudo.mapper import SessionMap
 from cui_guard.pseudo.stream import ArgsBuffer, TextHoldback, rehydrate_call_fields
 
@@ -35,7 +35,25 @@ _ANNOTATION_SKIP = frozenset(
 _FORMAT_SKIP = frozenset({"type", "syntax"})
 _ACTION_SKIP = frozenset({"type"})
 _OUTCOME_SKIP = frozenset({"outcome"})
+# Keys each container handles itself or that only identify it; any other key has its string
+# leaves scanned (see _Walker._extra).
+_PART_TEXT_KEYS = frozenset({"type", "text", "annotations"})
+_PART_REFUSAL_KEYS = frozenset({"type", "refusal"})
+_ITEM_KEYS = {
+    "message": frozenset({"type", "id", "status", "role", "content"}),
+    "function_call": frozenset({"type", "id", "status", "call_id", "name", "arguments"}),
+    "function_call_output": frozenset({"type", "id", "status", "call_id", "output"}),
+    "custom_tool_call_output": frozenset({"type", "id", "status", "call_id", "output"}),
+    "local_shell_call_output": frozenset({"type", "id", "status", "call_id", "output"}),
+    "custom_tool_call": frozenset({"type", "id", "status", "call_id", "name", "input"}),
+    "local_shell_call": frozenset({"type", "id", "status", "call_id", "action"}),
+    "shell_call": frozenset({"type", "id", "status", "call_id", "action"}),
+    "shell_call_output": frozenset({"type", "id", "status", "call_id", "output"}),
+}
+_FUNCTION_TOOL_KEYS = frozenset({"type", "name", "description", "parameters"})
+_CUSTOM_TOOL_KEYS = frozenset({"type", "name", "description", "format"})
 # Anything else on a reasoning item could carry unscanned text.
+_REASONING_PART_KEYS = frozenset({"type", "text"})
 _REASONING_KEYS = frozenset({"type", "id", "summary", "content", "encrypted_content", "status"})
 
 
@@ -74,6 +92,7 @@ class OpenAIWalker(_Walker):
             self._seg(f"{loc}.description", tool, "description")
         if "format" in tool:
             self._leaves(f"{loc}.format", tool, "format", _FORMAT_SKIP)
+        self._extra(loc, tool, _CUSTOM_TOOL_KEYS)
 
     # -- Responses input --------------------------------------------------
     def _parts(self, loc: str, holder: Any, key: Any) -> None:
@@ -101,11 +120,13 @@ class OpenAIWalker(_Walker):
                     self._leaves(f"{loc}.annotations[{j}]", anns, j, _ANNOTATION_SKIP)
             elif anns is not None:
                 self.unparseable.append(f"{loc}.annotations")  # never forward an unscanned value
+            self._extra(loc, p, _PART_TEXT_KEYS)
         elif t == "refusal":
             if "refusal" in p:
                 self._seg(f"{loc}.refusal", p, "refusal")
             else:
                 self.unparseable.append(loc)
+            self._extra(loc, p, _PART_REFUSAL_KEYS)
         elif t == "input_image":
             kind = "image"
         elif t == "input_file":
@@ -164,6 +185,19 @@ class OpenAIWalker(_Walker):
                 self._leaves(f"{loc}.output", it, "output", _OUTCOME_SKIP)
         else:
             self.unparseable.append(loc)
+        if t in _ITEM_KEYS:
+            self._extra(loc, it, _ITEM_KEYS[t])
+
+    def _ro_leaves(self, loc: str, v: Any) -> None:
+        """Scan every string leaf of an unrecognised reasoning field, read-only."""
+        if isinstance(v, str):
+            self.readonly.append(Segment(len(self.readonly), loc, v))
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                self._ro_leaves(f"{loc}[{i}]", x)
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                self._ro_leaves(f"{loc}.{k}", x)
 
     def _reasoning(self, loc: str, it: dict) -> None:
         """Reasoning items are never modified; their summary and content text is scanned read-only."""
@@ -179,6 +213,10 @@ class OpenAIWalker(_Walker):
                 continue
             for j, part in enumerate(parts):
                 self._ro(f"{loc}.{key}[{j}].text", part, "text")
+                if isinstance(part, dict):
+                    for k in part:
+                        if k not in _REASONING_PART_KEYS:
+                            self._ro_leaves(f"{loc}.{key}[{j}].{k}", part[k])
 
     def _tools(self, tools: Any) -> None:
         if not isinstance(tools, list):
@@ -197,6 +235,7 @@ class OpenAIWalker(_Walker):
                     self._seg(f"{loc}.description", tool, "description")
                 if "parameters" in tool:
                     self._schema(f"{loc}.parameters", tool, "parameters")
+                self._extra(loc, tool, _FUNCTION_TOOL_KEYS)
             elif t == "custom":
                 self.custom_tool(loc, tool)
             elif self._opq(loc, "server_tool"):

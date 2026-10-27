@@ -34,6 +34,17 @@ _SCHEMA_STRUCTURAL = frozenset({"type", "required", "$ref", "$schema", "format",
 _SCHEMA_NAME_MAPS = frozenset({"properties", "$defs", "definitions", "patternProperties"})
 _CITATION_SKIP = frozenset({"type", "url", "encrypted_index", "file_id"})
 _NO_KEYS: frozenset[str] = frozenset()
+# Keys each container handles itself or that only identify it. Any other key is unknown to us
+# (a provider may add fields), so its string leaves are scanned like any other text.
+_MESSAGE_KEYS = frozenset({"role", "content"})
+_TEXT_KEYS = frozenset({"type", "text", "citations", "cache_control"})
+_TOOL_USE_KEYS = frozenset({"type", "id", "name", "input", "cache_control"})
+_TOOL_RESULT_KEYS = frozenset({"type", "tool_use_id", "content", "is_error", "cache_control"})
+_SEARCH_RESULT_KEYS = frozenset({"type", "source", "title", "content", "cache_control"})
+_DOCUMENT_KEYS = frozenset({"type", "title", "context", "source", "cache_control"})
+_DOC_TEXT_KEYS = frozenset({"type", "data", "media_type"})
+_DOC_CONTENT_KEYS = frozenset({"type", "content"})
+_TOOL_KEYS = frozenset({"type", "name", "description", "input_schema", "cache_control"})
 
 
 def _notice(kind: str) -> dict:
@@ -85,8 +96,15 @@ class _Walker:
                 self._leaves(f"{loc}[{i}]", v, i, skip)
         elif isinstance(v, dict):
             for k in list(v):
-                if k not in skip:
+                # A skipped key is an identifier (a scalar); a container under it is scanned.
+                if k not in skip or isinstance(v[k], (dict, list)):
                     self._leaves(f"{loc}.{k}", v, k, skip)
+
+    def _extra(self, loc: str, holder: dict, known: frozenset[str]) -> None:
+        """Scan the string leaves of every key a container does not recognise."""
+        for k in list(holder):
+            if k not in known:
+                self._leaves(f"{loc}.{k}", holder, k)
 
     def _opt_seg(self, loc: str, holder: dict, key: str) -> None:
         if holder.get(key) is not None:
@@ -155,27 +173,33 @@ class _Walker:
                     self._leaves(f"{loc}.citations[{j}]", cites, j, _CITATION_SKIP)
             elif cites is not None:
                 self.unparseable.append(f"{loc}.citations")  # never forward an unscanned value
+            self._extra(loc, b, _TEXT_KEYS)
         elif t == "tool_use":
             if isinstance(b.get("input"), dict):
                 self._leaves(f"{loc}.input", b, "input")
             else:
                 self.unparseable.append(loc)
+            self._extra(loc, b, _TOOL_USE_KEYS)
         else:  # tool_result, search_result
             if t == "search_result":
                 self._opt_seg(f"{loc}.title", b, "title")
                 self._opt_seg(f"{loc}.source", b, "source")
             if b.get("content") is not None:
                 self._content(f"{loc}.content", b, "content")
+            self._extra(loc, b, _SEARCH_RESULT_KEYS if t == "search_result" else _TOOL_RESULT_KEYS)
 
     def _document(self, loc: str, holder: list, i: int, b: dict) -> None:
         self._opt_seg(f"{loc}.title", b, "title")
         self._opt_seg(f"{loc}.context", b, "context")
+        self._extra(loc, b, _DOCUMENT_KEYS)
         src = b.get("source")
         stype = src.get("type") if isinstance(src, dict) else None
         if stype == "text" and "data" in src:
             self._seg(f"{loc}.source.data", src, "data")
+            self._extra(f"{loc}.source", src, _DOC_TEXT_KEYS)
         elif stype == "content" and "content" in src:
             self._content(f"{loc}.source.content", src, "content")
+            self._extra(f"{loc}.source", src, _DOC_CONTENT_KEYS)
         elif stype in ("url", "file", "base64"):
             kind = "document" if stype == "base64" else "url_source"
             if self._opq(loc, kind):
@@ -204,6 +228,7 @@ class _Walker:
                 self._seg(f"{loc}.description", tool, "description")
             if "input_schema" in tool:
                 self._schema(f"{loc}.input_schema", tool, "input_schema")
+            self._extra(loc, tool, _TOOL_KEYS)
             keep.append(tool)
         if self.decision is not None:
             tools[:] = keep
@@ -218,6 +243,7 @@ class _Walker:
             for i, m in enumerate(msgs):
                 if isinstance(m, dict) and "content" in m:
                     self._content(f"messages[{i}].content", m, "content")
+                    self._extra(f"messages[{i}]", m, _MESSAGE_KEYS)
                 else:
                     self.unparseable.append(f"messages[{i}]")
         if "tools" in body:

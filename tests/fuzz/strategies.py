@@ -105,6 +105,9 @@ _STRUCTURAL = frozenset(
 )
 
 
+_FORWARDED_TYPES = tuple({"thinking", "redacted_thinking", "reasoning", "item_reference"})
+
+
 @st.composite
 def request_bodies(draw: st.DrawFn, fmt: str) -> dict:
     """A fixture request mutated: string leaves swapped, values retyped, keys added or dropped.
@@ -115,11 +118,30 @@ def request_bodies(draw: st.DrawFn, fmt: str) -> dict:
     body = seed_body(fmt)
     for _ in range(draw(st.integers(0, 4))):
         nodes = list(_walk_paths(body))
-        op = draw(st.sampled_from(["leaf", "retype", "delete", "add_top", "add_free"]))
+        op = draw(st.sampled_from(["leaf", "retype", "delete", "add_top", "add_free", "add_nested", "add_nested"]))
         if op == "add_top" or not nodes:
             key = draw(st.one_of(st.sampled_from(_KEY_POOL), st.text(max_size=6)))
             if key not in _HANDLED_TOP[fmt]:  # unknown top-level keys are scanned whole
                 body[key] = draw(_json_values())
+            continue
+        if op == "add_nested":
+            # An unknown key (string, list or dict value) inside a known container: a block,
+            # part, item, message or tool definition. Containers whose extra keys are documented
+            # as forwarded untouched (signed or reasoning items, cache hints) are left alone.
+            holders = [
+                p
+                for p, v in nodes
+                if isinstance(v, dict)
+                and p[0] not in _UNTOUCHED_TOP[fmt]
+                and v.get("type") not in _FORWARDED_TYPES
+                and "cache_control" not in p
+                and "mcp_servers" not in p
+            ]
+            if holders:
+                holder = _at(body, draw(st.sampled_from(holders)))
+                key = draw(st.one_of(st.sampled_from(_KEY_POOL), st.text(max_size=6)))
+                if key not in holder and key not in _STRUCTURAL and key != "arguments":
+                    holder[key] = draw(_json_values())
             continue
         if op == "add_free":
             holders = [p for p, v in nodes if isinstance(v, dict) and _FREEFORM & {k for k in p[1:] if isinstance(k, str)}]

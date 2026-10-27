@@ -69,3 +69,59 @@ def test_non_list_annotations_are_unparseable():
     part = {"type": "input_text", "text": "t", "annotations": "CANARY-1"}
     body = {"input": [{"type": "message", "role": "user", "content": [part]}]}
     assert ADAPTERS["openai-responses"].extract(body).unparseable == ["input[0].content[0].annotations"]
+
+
+# -- unknown keys nested in known containers are scanned -----------------
+
+MARKING = "CUI//SP-CTI"
+HOST = "db.example.mil"
+
+
+def _pipeline():
+    from cui_guard.detect.engine import Detector
+    from cui_guard.detect.identifiers import IdentifierConfig
+    from cui_guard.detect.rules import load_builtin_rules
+    from cui_guard.model import Trust
+    from cui_guard.override.store import OverrideStore
+    from cui_guard.pipeline import Pipeline
+    from cui_guard.policy.loader import load_builtin_layer
+    from cui_guard.policy.merge import merge_layers
+    from cui_guard.pseudo.mapper import SessionMap
+
+    policy = merge_layers(load_builtin_layer(), None, None)
+    det = Detector(load_builtin_rules(), IdentifierConfig())
+    return Pipeline(policy, det, SessionMap(), Trust.PUBLIC, OverrideStore(), 10.0)
+
+
+def _bodies(fmt: str, value) -> list[dict]:
+    """One body with an unknown key on a text block/part/item, one on a tool definition."""
+    if fmt == "anthropic":
+        msg = {"role": "user", "content": [{"type": "text", "text": "hi", "x_note": value}]}
+        tool = {"name": "t", "description": "d", "input_schema": {"type": "object"}, "x_note": value}
+        return [{"messages": [msg]}, {"messages": [{"role": "user", "content": "hi"}], "tools": [tool]}]
+    if fmt == "openai-responses":
+        part = {"type": "input_text", "text": "hi", "x_note": value}
+        item = {"type": "message", "role": "user", "content": [part]}
+        tool = {"type": "function", "name": "t", "parameters": {"type": "object"}, "x_note": value}
+        return [{"input": [item]}, {"input": "hi", "tools": [tool]}]
+    part = {"type": "text", "text": "hi", "x_note": value}
+    fn = {"name": "t", "parameters": {"type": "object"}}
+    return [
+        {"messages": [{"role": "user", "content": [part]}]},
+        {"messages": [{"role": "user", "content": "hi"}], "tools": [{"type": "function", "function": fn, "x_note": value}]},
+        {"messages": [{"role": "user", "content": "hi"}], "tools": [{"type": "function", "function": {**fn, "x_note": value}}]},
+    ]
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+@pytest.mark.parametrize("wrap", [lambda s: s, lambda s: [s], lambda s: {"k": s}], ids=["str", "list", "dict"])
+def test_unknown_nested_key_is_scanned(fmt, wrap):
+    ad = ADAPTERS[fmt]
+    for body in _bodies(fmt, wrap(f"see {MARKING} text")):
+        d = _pipeline().evaluate(ad.extract(body))
+        assert d.blocked, "the marking in an unknown key must block"
+    for body in _bodies(fmt, wrap(f"connect to {HOST} now")):
+        pipe = _pipeline()
+        d = pipe.evaluate(ad.extract(body))
+        assert not d.blocked
+        assert HOST not in str(ad.apply(body, d)), "the host must be masked, never forwarded raw"
