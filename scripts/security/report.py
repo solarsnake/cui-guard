@@ -29,7 +29,11 @@ PYTEST_GATES = ("test", "leak", "fuzz")
 STATUSES = {"PASS", "FAIL", "SKIPPED"}
 HEX64 = re.compile(r"[0-9a-f]{64}")
 SAFE_NAME = re.compile(r"[A-Za-z0-9._+-]{1,200}")
-SAFE_REASON = re.compile(r"[A-Za-z0-9 ;,.-]{1,80}")
+# Only the reasons scripts/check writes are echoed; anything else is dropped.
+KNOWN_REASONS = {"gitleaks not installed; runs in CI", "no workflows yet"}
+AUDIT_FILES = [
+    f"audit-{lock}-{src}.json" for lock in ("runtime", "dev") for src in ("pypi", "osv")
+]
 
 
 def _load(path: Path, name: str):
@@ -55,7 +59,7 @@ def gate_status(raw: Path, gate: str) -> dict:
         seconds = None
     out: dict = {"status": status, "seconds": seconds}
     reason = parts[2].strip() if len(parts) > 2 else ""
-    if status == "SKIPPED" and SAFE_REASON.fullmatch(reason):
+    if status == "SKIPPED" and reason in KNOWN_REASONS:
         out["reason"] = reason
     return out
 
@@ -78,37 +82,46 @@ def junit_counts(path: Path) -> dict | None:
     return counts
 
 
-def dependency_findings(raw: Path, triaged: set[str]) -> list[dict]:
+def dependency_findings(raw: Path, triaged: set[str]) -> tuple[list[dict], int, int]:
+    """Findings plus counts of omitted (unsafe ID or name) findings and unusable audit files."""
     found: dict[tuple, dict] = {}
+    omitted = 0
+    unreadable = sum(1 for n in AUDIT_FILES if not (raw / n).is_file())
     for path in sorted(raw.glob("audit-*.json")):
         lock, _, source = path.stem.removeprefix("audit-").partition("-")
         try:
-            deps = json.loads(path.read_text()).get("dependencies", [])
-        except (OSError, ValueError, AttributeError):
+            deps = json.loads(path.read_text())["dependencies"]
+            if not isinstance(deps, list):
+                raise TypeError
+            vulns = [(d, v) for d in deps for v in d.get("vulns", [])]
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            if path.name in AUDIT_FILES:
+                unreadable += 1
             continue
-        for dep in deps if isinstance(deps, list) else []:
-            for vuln in dep.get("vulns", []):
-                ids = [vuln.get("id"), *vuln.get("aliases", [])]
-                if not all(isinstance(i, str) and SAFE_NAME.fullmatch(i) for i in ids):
-                    continue
-                name, version = str(dep.get("name")), str(dep.get("version"))
-                if not (SAFE_NAME.fullmatch(name) and SAFE_NAME.fullmatch(version)):
-                    continue
-                key = (lock, name, version, ids[0])
-                entry = found.setdefault(
-                    key,
-                    {
-                        "id": ids[0],
-                        "aliases": sorted(set(ids[1:])),
-                        "package": name,
-                        "version": version,
-                        "lock": lock,
-                        "sources": [],
-                        "vex": "triaged" if set(ids) & triaged else "untriaged",
-                    },
-                )
-                entry["sources"] = sorted({*entry["sources"], source})
-    return sorted(found.values(), key=lambda e: (e["lock"], e["package"], e["id"]))
+        for dep, vuln in vulns:
+            ids = [vuln.get("id"), *vuln.get("aliases", [])]
+            name, version = str(dep.get("name")), str(dep.get("version"))
+            if not all(
+                isinstance(i, str) and SAFE_NAME.fullmatch(i) for i in ids
+            ) or not (SAFE_NAME.fullmatch(name) and SAFE_NAME.fullmatch(version)):
+                omitted += 1
+                continue
+            key = (lock, name, version, ids[0])
+            entry = found.setdefault(
+                key,
+                {
+                    "id": ids[0],
+                    "aliases": sorted(set(ids[1:])),
+                    "package": name,
+                    "version": version,
+                    "lock": lock,
+                    "sources": [],
+                    "vex": "triaged" if set(ids) & triaged else "untriaged",
+                },
+            )
+            entry["sources"] = sorted({*entry["sources"], source})
+    rows = sorted(found.values(), key=lambda e: (e["lock"], e["package"], e["id"]))
+    return rows, omitted, unreadable
 
 
 def known_gaps() -> list[str]:
@@ -156,40 +169,83 @@ def tool_versions(raw: Path) -> dict[str, str]:
 
 
 def build_report(raw: Path) -> dict:
-    vex = _load(ROOT / "scripts" / "security" / "vex.py", "cui_vex")
-    triaged = set(vex.ignored_ids(vex._load()))
+    errors: list[str] = []
+
+    def section(name: str, fn, default):
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 - recorded by name only, never by message
+            errors.append(f"{name}: failed to build")
+            return default
+
+    def triaged_ids() -> set[str]:
+        vex = _load(ROOT / "scripts" / "security" / "vex.py", "cui_vex")
+        return set(vex.ignored_ids(vex._load()))
+
     gates = {g: gate_status(raw, g) for g in GATES}
+    tests = {g: junit_counts(raw / f"{g}.xml") for g in PYTEST_GATES}
+    for g, counts in tests.items():
+        if gates[g]["status"] != "PASS":
+            continue
+        if counts is None:
+            gates[g].update(status="FAIL", note="junit missing or unreadable")
+        elif counts["failed"]:
+            gates[g].update(status="FAIL", note="junit reports failures")
+    findings, omitted, unreadable = section(
+        "dependency findings",
+        lambda: dependency_findings(raw, section("vex", triaged_ids, set())),
+        ([], 0, 0),
+    )
+    audit_ran = gates["audit"]["status"] != "SKIPPED"
+    if omitted:
+        errors.append(f"{omitted} findings omitted (unsafe ID or name)")
+    if unreadable and audit_ran:
+        errors.append(f"{unreadable} audit results missing or unreadable")
     sbom = ""
     try:
         sbom = (raw / "sbom.sha256").read_text().strip()
     except OSError:
         pass
+    sbom_ok = bool(HEX64.fullmatch(sbom))
+    if gates["sbom"]["status"] != "SKIPPED" and not sbom_ok:
+        errors.append("SBOM digest missing")
     a, b = read_digests(raw / "build-a.digests"), read_digests(raw / "build-b.digests")
+    reproducible = bool(a) and a == b
+    if gates["build"]["status"] != "SKIPPED" and not reproducible:
+        errors.append("build digests missing or not reproducible")
     commit = git("rev-parse", "HEAD")
+    gaps = section("known gaps", known_gaps, [])
+    skipped = [g for g, v in gates.items() if v["status"] == "SKIPPED"]
+    ok = not errors and all(v["status"] in ("PASS", "SKIPPED") for v in gates.values())
     return {
+        "ok": ok,
+        "errors": errors,
+        "skipped_gates": skipped,
         "commit": commit or "unknown",
         "dirty": bool(git("status", "--porcelain")),
         "date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tools": tool_versions(raw),
         "gates": gates,
-        "tests": {
-            g: c
-            for g in PYTEST_GATES
-            if (c := junit_counts(raw / f"{g}.xml")) is not None
-        },
-        "dependency_findings": dependency_findings(raw, triaged),
-        "known_gaps": known_gaps(),
-        "sbom_sha256": sbom if HEX64.fullmatch(sbom) else None,
-        "build_digests": {"a": a, "b": b, "reproducible": bool(a) and a == b},
+        "tests": {g: c for g, c in tests.items() if c is not None},
+        "dependency_findings": findings,
+        "omitted_findings": omitted,
+        "unreadable_audit_results": unreadable,
+        "known_gaps": gaps,
+        "sbom_sha256": sbom if sbom_ok else None,
+        "build_digests": {"a": a, "b": b, "reproducible": reproducible},
     }
 
 
 def render_summary(r: dict) -> str:
-    ok = all(g["status"] in ("PASS", "SKIPPED") for g in r["gates"].values())
     lines = [
         "# cui-guard security report",
         "",
-        f"Overall: {'PASS' if ok else 'FAIL'}",
+        f"Overall: {'PASS' if r['ok'] else 'FAIL'}"
+        + (
+            f" ({len(r['skipped_gates'])} skipped: {', '.join(r['skipped_gates'])})"
+            if r["skipped_gates"]
+            else ""
+        ),
         f"Commit: {r['commit']}{' (dirty tree)' if r['dirty'] else ''}",
         f"Date: {r['date']}",
         "Tools: " + (", ".join(f"{k} {v}" for k, v in r["tools"].items()) or "none"),
@@ -201,7 +257,9 @@ def render_summary(r: dict) -> str:
     ]
     for name, g in r["gates"].items():
         sec = "" if g["seconds"] is None else g["seconds"]
-        lines.append(f"| {name} | {g['status']} | {sec} | {g.get('reason', '')} |")
+        lines.append(
+            f"| {name} | {g['status']} | {sec} | {g.get('reason') or g.get('note', '')} |"
+        )
     lines += [
         "",
         "## Test counts",
@@ -213,6 +271,8 @@ def render_summary(r: dict) -> str:
         lines.append(
             f"| {name} | {c['passed']} | {c['failed']} | {c['xfailed']} | {c['skipped']} |"
         )
+    if r["errors"]:
+        lines += ["", "## Report errors", ""] + [f"- {e}" for e in r["errors"]]
     lines += ["", "## Dependency findings", ""]
     if r["dependency_findings"]:
         lines += [
@@ -261,7 +321,9 @@ def main() -> int:
     ]
     for g in bad:
         print(f"gate {g}: {report['gates'][g]['status']}", file=sys.stderr)
-    return 1 if bad else 0
+    for e in report["errors"]:
+        print(f"report error: {e}", file=sys.stderr)
+    return 0 if report["ok"] else 1
 
 
 if __name__ == "__main__":

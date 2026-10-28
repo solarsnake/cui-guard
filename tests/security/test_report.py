@@ -79,8 +79,25 @@ def test_report_contains_no_canaries(tmp_path):
         f"{text}</failure></testcase></testsuite></testsuites>"
     )
     (raw / "test.status").write_text(f"FAIL 1 {text}\n")
+    # An audit advisory description and a SKIPPED reason carrying canaries.
+    (raw / "audit-dev-pypi.json").write_text(
+        json.dumps(
+            {
+                "dependencies": [
+                    {
+                        "name": "examplepkg",
+                        "version": "1.0.0",
+                        "vulns": [{"id": "PYSEC-2026-1", "description": text}],
+                    }
+                ]
+            }
+        )
+    )
+    (raw / "secrets.status").write_text(f"SKIPPED 0 {text}\n")
     out = tmp_path / "out"
     assert render(raw, out).returncode == 1
+    # Proves the junit was parsed, not skipped.
+    assert json.loads((out / "report.json").read_text())["tests"]["test"]["failed"] == 1
     for name in ("summary.md", "report.json"):
         body = (out / name).read_text()
         for canary in CANARIES.values():
@@ -103,3 +120,106 @@ def test_report_exit_code_reflects_failures(tmp_path):
     (raw / "lint.status").write_text("PASS 2\n")
     (raw / "build.status").unlink()
     assert render(raw, tmp_path / "missing").returncode == 1
+
+
+def run_case(tmp_path, mutate):
+    raw = tmp_path / "raw"
+    shutil.copytree(FIXTURE, raw)
+    mutate(raw)
+    out = tmp_path / "out"
+    done = render(raw, out)
+    assert (out / "report.json").exists() and (out / "summary.md").exists()
+    return (
+        done,
+        json.loads((out / "report.json").read_text()),
+        (out / "summary.md").read_text(),
+    )
+
+
+def test_pass_gate_with_missing_junit_fails(tmp_path):
+    done, report, _ = run_case(tmp_path, lambda raw: (raw / "leak.xml").unlink())
+    assert done.returncode == 1
+    assert report["gates"]["leak"]["status"] == "FAIL"
+
+
+def test_pass_gate_with_junit_failures_fails(tmp_path):
+    def mutate(raw):
+        xml = (
+            (raw / "fuzz.xml")
+            .read_text()
+            .replace(
+                '<testcase classname="tests.fuzz" name="test_p"/>',
+                '<testcase classname="tests.fuzz" name="test_p"><failure message="m"/></testcase>',
+            )
+        )
+        (raw / "fuzz.xml").write_text(xml)
+
+    done, report, _ = run_case(tmp_path, mutate)
+    assert done.returncode == 1
+    assert report["tests"]["fuzz"]["failed"] == 1
+    assert report["gates"]["fuzz"]["status"] == "FAIL"
+
+
+def test_unreadable_audit_json_fails(tmp_path):
+    done, report, summary = run_case(
+        tmp_path, lambda raw: (raw / "audit-runtime-osv.json").write_text("not json")
+    )
+    assert done.returncode == 1
+    assert report["unreadable_audit_results"] == 1
+    assert "audit results missing or unreadable" in summary
+
+
+def test_unsafe_finding_id_is_counted_not_dropped_silently(tmp_path):
+    def mutate(raw):
+        data = json.loads((raw / "audit-dev-pypi.json").read_text())
+        data["dependencies"][0]["vulns"][0]["id"] = "bad id with spaces"
+        (raw / "audit-dev-pypi.json").write_text(json.dumps(data))
+
+    done, report, summary = run_case(tmp_path, mutate)
+    assert done.returncode == 1
+    assert report["omitted_findings"] == 1
+    assert "1 findings omitted" in summary
+    assert "bad id" not in summary
+
+
+def test_section_exception_still_writes_report(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("cui_report_mod", SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def boom():
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(mod, "known_gaps", boom)
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        sys, "argv", ["report.py", "render", "--raw", str(FIXTURE), "--out", str(out)]
+    )
+    assert mod.main() == 1
+    report = json.loads((out / "report.json").read_text())
+    assert report["errors"] == ["known gaps: failed to build"]
+    assert "secret detail" not in (out / "summary.md").read_text()
+
+
+def test_missing_sbom_digest_fails(tmp_path):
+    done, report, _ = run_case(tmp_path, lambda raw: (raw / "sbom.sha256").unlink())
+    assert done.returncode == 1
+    assert report["sbom_sha256"] is None
+
+
+def test_non_reproducible_build_fails(tmp_path):
+    def mutate(raw):
+        (raw / "build-b.digests").write_text(
+            "c" * 64 + "  cui_guard-0.0.0-py3-none-any.whl\n"
+        )
+
+    done, report, _ = run_case(tmp_path, mutate)
+    assert done.returncode == 1
+    assert report["build_digests"]["reproducible"] is False
+
+
+def test_summary_lists_skipped_gates(tmp_path):
+    done, _, summary = run_case(tmp_path, lambda raw: None)
+    assert done.returncode == 0
+    assert "Overall: PASS (2 skipped: secrets, workflows)" in summary
