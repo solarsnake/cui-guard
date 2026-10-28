@@ -77,5 +77,24 @@ The CMVP certificate belongs to the platform vendor's module, for example the Re
 
 ## How this is tested
 
-- Unit tests (`tests/test_fips.py`) inject every probe, so each pass and fail path runs on any host.
-- `scripts/check fips` runs `tests/fips` inside a Red Hat UBI 9 container (`registry.access.redhat.com/ubi9/python-312`, pinned by digest) with the FIPS provider forced on through `OPENSSL_CONF` (`tests/fips/openssl-fips.cnf`). It checks the provider and hashlib checks pass, that MD5 is refused, and that a real TLS handshake succeeds with the FIPS context, using GCM suites. The kernel check cannot pass in a container, so it is covered only by the unit tests. Without Docker the gate prints `SKIPPED (docker not available)`. CI runs it in its own `fips` job.
+- **Unit tests** (`tests/test_fips.py`) inject every probe, so each pass and fail path runs on any host. The real probes' fail paths are tested too:
+  - the kernel probe against flag files holding `1`, `0`, nothing, and a missing path;
+  - the hashlib probe with `hashlib.sha256` pointed at CPython's built-in `_sha2.sha256`;
+  - the provider probe on a host with no kernel FIPS flag and no `OPENSSL_CONF`;
+  - the gateway refusal, with the expected failures worked out from the host, not from `fips_status()`.
+
+  The trust-store tests cover the following. In every case the gateway refuses the file; it never falls back to a default store.
+  - an empty, whitespace-only, junk or oversized `ca_file`;
+  - a relative path;
+  - a writable or foreign-owned file;
+  - a symlink to a writable target.
+- **`scripts/check fips`** runs `tests/fips` inside a Red Hat UBI 9 container (`registry.access.redhat.com/ubi9/python-312`, pinned by digest) with the FIPS provider forced on through `OPENSSL_CONF` (`tests/fips/openssl-fips.cnf`). It checks:
+  - the provider and hashlib checks pass;
+  - MD5 is refused;
+  - a real TLS handshake with the FIPS context succeeds, using GCM suites under TLS 1.2 and TLS 1.3.
+
+  It also runs two negative controls in subprocesses:
+  - a configuration that sets `fips=yes` default properties with only the non-FIPS provider active, where `_hashlib.get_fips_mode()` returns 1 but the provider and hashlib checks fail;
+  - no FIPS configuration at all, where the provider check fails.
+
+  The kernel check cannot pass in a container, so it is covered only by the unit tests. Without Docker the gate prints `SKIPPED (docker not available)`. CI runs it in its own `fips` job.

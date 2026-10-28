@@ -134,6 +134,19 @@ def _bundle_count(path: str) -> int:
     return Path(path).read_text(encoding="ascii").count("-----" + "BEGIN CERTIFICATE")
 
 
+@pytest.mark.parametrize("fips", [False, True])
+def test_every_context_keeps_the_tls_baseline(tmp_path, fips):
+    if fips and not _expected_platform_store():
+        pytest.skip("this OpenSSL has no compiled-in default store")
+    for ca in (None, str(_private_copy(tmp_path))):
+        ctx = upstream_ssl_context(ca, fips)
+        assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+        assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2
+        tls12 = [c["name"] for c in ctx.get_ciphers() if c["protocol"] == "TLSv1.2"]
+        if fips:
+            assert tls12 and all(n.startswith("ECDHE") and "GCM" in n for n in tls12)
+
+
 def test_default_store_is_certifi_outside_fips_mode():
     import certifi
 
@@ -158,16 +171,16 @@ def test_fips_mode_uses_platform_store_not_certifi(monkeypatch):
     if not expected:
         pytest.skip("this OpenSSL has no compiled-in default store")
     calls = []
-    real = ssl.create_default_context
+    real = ssl.SSLContext.load_verify_locations
 
-    def spy(*args, **kwargs):
+    def spy(self, *args, **kwargs):
         calls.append(kwargs)
-        return real(*args, **kwargs)
+        return real(self, *args, **kwargs)
 
     def no_certifi() -> str:
         raise AssertionError("certifi used in FIPS mode")
 
-    monkeypatch.setattr(ssl, "create_default_context", spy)
+    monkeypatch.setattr(ssl.SSLContext, "load_verify_locations", spy)
     monkeypatch.setattr(certifi, "where", no_certifi)
     ctx = upstream_ssl_context(None, True)
     assert calls == [expected]  # OpenSSL's compiled-in paths, passed explicitly
@@ -257,16 +270,41 @@ def test_ca_file_symlink_target_is_checked(tmp_path):
         upstream_ssl_context(str(link), False)
 
 
-def test_ca_file_not_a_bundle_refused(tmp_path):
-    for name, data in (
-        ("binary.crt", bytes(range(256))),
-        ("empty.crt", b"no certs here\n"),
-    ):
-        path = tmp_path / name
-        path.write_bytes(data)
-        path.chmod(0o644)
-        with pytest.raises(PolicyError, match="ca_file"):
-            upstream_ssl_context(str(path), False)
+@pytest.mark.parametrize(
+    "data", [b"", b"  \n\t\n", b"no certs here\n", bytes(range(256))],
+    ids=["zero-byte", "whitespace", "junk", "binary"],
+)  # fmt: skip
+@pytest.mark.parametrize("fips", [False, True])
+def test_ca_file_without_certificates_refused(tmp_path, monkeypatch, data, fips):
+    # Refused, never a fallback to a default store (which SSL_CERT_FILE could redirect).
+    monkeypatch.setenv("SSL_CERT_FILE", str(_private_copy(tmp_path)))
+    path = tmp_path / "bundle.crt"
+    path.write_bytes(data)
+    path.chmod(0o644)
+    with pytest.raises(PolicyError, match="no certificates"):
+        upstream_ssl_context(str(path), fips)
+
+
+def test_ca_file_with_utf8_comment_loads_exactly_its_cert(tmp_path):
+    path = tmp_path / "commented.crt"
+    path.write_bytes(
+        "# Wurzelzertifikat für Prüfzwecke\n".encode() + TEST_CA.read_bytes()
+    )
+    path.chmod(0o644)
+    certs = upstream_ssl_context(str(path), False).get_ca_certs()
+    assert len(certs) == 1
+
+
+def test_ca_file_oversized_refused(tmp_path):
+    path = tmp_path / "huge.crt"
+    with path.open("wb") as f:
+        f.truncate(16 * 1024 * 1024 + 1)  # sparse
+    path.chmod(0o644)
+    with pytest.raises(PolicyError, match="larger than"):
+        upstream_ssl_context(str(path), False)
+
+
+def test_ca_file_directory_refused(tmp_path):
     with pytest.raises(PolicyError, match="regular file"):
         upstream_ssl_context(str(tmp_path), False)
 

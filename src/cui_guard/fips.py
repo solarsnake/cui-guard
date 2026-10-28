@@ -13,8 +13,10 @@ import hashlib
 import importlib
 import os
 import platform
+import re
 import ssl
 import stat
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -29,6 +31,10 @@ from cui_guard.policy.schema import PolicyError
 PYTHON_EOL = {"3.11": "2027-10", "3.12": "2028-10", "3.13": "2029-10", "3.14": "2030-10", "3.15": "2031-10"}  # fmt: skip
 FIPS_TLS12_CIPHERS = "ECDHE+AESGCM"
 KERNEL_FIPS_FLAG = Path("/proc/sys/crypto/fips_enabled")
+MAX_CA_FILE_BYTES = 16 * 1024 * 1024
+_CERT_BLOCK = re.compile(
+    r"-{5}BEGIN CERTIFICATE-{5}.+?-{5}END CERTIFICATE-{5}", re.DOTALL
+)
 # SHA-256("abc"), FIPS 180-4 example: a known-answer test for the hash actually served.
 _SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
@@ -204,14 +210,35 @@ def _read_ca_file(ca_file: str) -> str:
             raise PolicyError(
                 f"ca_file {ca_file}: owned by neither the current user nor root"
             )
+        if st.st_size > MAX_CA_FILE_BYTES:
+            raise PolicyError(
+                f"ca_file {ca_file}: larger than {MAX_CA_FILE_BYTES} bytes"
+            )
         with os.fdopen(fd, "rb", closefd=False) as f:
-            data = f.read()
+            data = f.read(MAX_CA_FILE_BYTES + 1)
     finally:
         os.close(fd)
-    try:
-        return data.decode("ascii")
-    except UnicodeDecodeError:
-        raise PolicyError(f"ca_file {ca_file}: not a PEM bundle") from None
+    if len(data) > MAX_CA_FILE_BYTES:
+        raise PolicyError(f"ca_file {ca_file}: larger than {MAX_CA_FILE_BYTES} bytes")
+    # Only the certificate blocks are kept, so comment lines in any encoding are fine.
+    # Latin-1 maps every byte, so decoding cannot fail; the blocks themselves are ASCII.
+    blocks = _CERT_BLOCK.findall(data.decode("latin-1"))
+    if not blocks:
+        # Never pass an empty store on: OpenSSL would fall back to the default paths.
+        raise PolicyError(f"ca_file {ca_file}: no certificates in the bundle")
+    return "\n".join(blocks) + "\n"
+
+
+def _client_context() -> ssl.SSLContext:
+    """An empty client context: CERT_REQUIRED and check_hostname, no roots loaded.
+
+    Never `create_default_context`: given no or empty inputs it loads the default store,
+    which SSL_CERT_FILE and SSL_CERT_DIR can redirect.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    if sys.version_info >= (3, 13):  # what create_default_context adds from 3.13 on
+        ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN | ssl.VERIFY_X509_STRICT
+    return ctx
 
 
 def _platform_store() -> dict[str, str]:
@@ -239,16 +266,17 @@ def upstream_ssl_context(ca_file: str | None, fips: bool) -> ssl.SSLContext:
     and SSL_CERT_DIR never change the trust roots. FIPS mode also limits TLS 1.2 to
     ECDHE with AES-GCM; TLS 1.3 suites are left to the FIPS provider.
     """
+    ctx = _client_context()
     if ca_file is not None:
         pem = _read_ca_file(ca_file)
         try:
-            ctx = ssl.create_default_context(cadata=pem)
+            ctx.load_verify_locations(cadata=pem)
         except (ValueError, ssl.SSLError) as e:
             raise PolicyError(f"ca_file {ca_file}: cannot load ({e})") from None
     elif fips:
-        ctx = ssl.create_default_context(**_platform_store())
+        ctx.load_verify_locations(**_platform_store())
     else:
-        ctx = ssl.create_default_context(cafile=certifi.where())
+        ctx.load_verify_locations(cafile=certifi.where())
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
