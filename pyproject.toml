@@ -20,7 +20,7 @@ ner = ["presidio-analyzer", "spacy"]
 macos = ["pyobjc-framework-LocalAuthentication; sys_platform=='darwin'"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "ruff", "hypothesis", "pip-audit", "cyclonedx-bom", "zizmor", "uv>=0.9.17"]
+dev = ["pytest", "pytest-asyncio", "ruff", "hypothesis", "pip-audit", "cyclonedx-bom", "zizmor", "uv>=0.9.17", "pyyaml"]
 
 [project.scripts]
 cui-guard = "cui_guard.cli:main"

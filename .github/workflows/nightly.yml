@@ -1,0 +1,54 @@
+name: Nightly security checks
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+
+permissions: {}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        id: py
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+      - name: Install locked dev dependencies
+        env:
+          UV_PYTHON: ${{ steps.py.outputs.python-path }}
+        run: uv sync --frozen --group dev
+      - name: Fuzz (nightly profile)
+        env:
+          HYPOTHESIS_PROFILE: nightly
+        run: scripts/check fuzz
+      - name: Dependency audit
+        run: scripts/check audit
+
+  open-issue:
+    needs: checks
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open a failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf 'The nightly security checks failed.\n\nRun: %s\n' "$RUN_URL" > "$RUNNER_TEMP/issue-body.md"
+          gh issue create --title "nightly security check failed" --body-file "$RUNNER_TEMP/issue-body.md"
