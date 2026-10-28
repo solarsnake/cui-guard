@@ -7,11 +7,13 @@ which forces the provider on through OPENSSL_CONF and sets CUI_GUARD_FIPS_CONTAI
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -118,3 +120,47 @@ def test_tls_handshake_with_fips_context(tmp_path, server_max):
     assert "GCM" in cipher
     if server_max == ssl.TLSVersion.TLSv1_2:
         assert version == "TLSv1.2" and cipher.startswith("ECDHE"), cipher
+
+
+_PROBE = (
+    "import json, _hashlib\n"
+    "from cui_guard.fips import fips_status\n"
+    "print(json.dumps({'mode': _hashlib.get_fips_mode(),"
+    " 'checks': {c.name: c.ok for c in fips_status()}}))\n"
+)
+
+
+def _probe_with(conf: str | None) -> dict:
+    env = {k: v for k, v in os.environ.items() if k != "OPENSSL_CONF"}
+    if conf is not None:
+        env["OPENSSL_CONF"] = conf
+    done = subprocess.run(
+        [sys.executable, "-c", _PROBE],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def test_fips_properties_without_fips_provider_fail(tmp_path):
+    # The trap: default_properties = fips=yes with only the default provider active makes
+    # get_fips_mode() return 1 although no FIPS module serves anything.
+    conf = tmp_path / "props-only.cnf"
+    conf.write_text(
+        "openssl_conf = openssl_init\n[openssl_init]\nproviders = provider_sect\n"
+        "alg_section = evp_properties\n[evp_properties]\ndefault_properties = fips=yes\n"
+        "[provider_sect]\ndefault = default_sect\n[default_sect]\nactivate = 1\n"
+    )
+    result = _probe_with(str(conf))
+    assert result["mode"] == 1
+    assert result["checks"]["openssl-fips-provider"] is False
+    assert result["checks"]["hashlib-openssl"] is False
+
+
+def test_without_fips_config_provider_check_fails():
+    result = _probe_with(None)
+    assert result["mode"] == 0
+    assert result["checks"]["openssl-fips-provider"] is False
+    assert result["checks"]["hashlib-openssl"] is True

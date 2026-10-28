@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from cui_guard.detect.identifiers import IdentifierConfig
@@ -41,6 +42,11 @@ def _rule_sig(r) -> tuple:
 def _sends_credential(credential: str) -> bool:
     """True when the gateway or agent would hand a real credential to this endpoint."""
     return credential == "passthrough" or credential.startswith(_CREDENTIAL_PREFIXES)
+
+
+def _sans_ca(ep: Endpoint | None) -> Endpoint | None:
+    """The endpoint without its trust store: a ca_file change is reported on its own."""
+    return replace(ep, ca_file=None) if ep is not None else None
 
 
 def snapshot_path() -> Path:
@@ -106,7 +112,7 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
                 f"endpoint {name} trust raised: "
                 f"{old_ep.trust.value} -> {ep.trust.value}"
             )
-        elif old_ep != ep:
+        elif _sans_ca(old_ep) != _sans_ca(ep):
             reasons.append(f"endpoint {name} changed (trust {ep.trust.value})")
 
     # A different trust store decides which servers the endpoint will accept (design 8.2).
@@ -116,7 +122,7 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
             reasons.append(f"endpoint {name} trust store changed (ca_file)")
 
     for name, ep in sorted((cur.endpoints or {}).items()):
-        if _sends_credential(ep.credential) and prev_eps.get(name) != ep:
+        if _sends_credential(ep.credential) and _sans_ca(prev_eps.get(name)) != _sans_ca(ep):
             reasons.append(
                 f"endpoint {name} ({ep.url}) is given credential {ep.credential}"
             )
@@ -124,7 +130,7 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
     cur_eps = cur.endpoints or {}
     lane = cur.default_lane
     if lane is not None and lane in cur_eps and (
-        prev.default_lane != lane or prev_eps.get(lane) != cur_eps[lane]
+        prev.default_lane != lane or _sans_ca(prev_eps.get(lane)) != _sans_ca(cur_eps[lane])
     ):
         reasons.append(f"default lane set to user-defined endpoint {lane}")
 

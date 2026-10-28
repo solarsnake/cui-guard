@@ -126,6 +126,6 @@ def test_fips_and_ca_file_keys_validated():
     assert parse_layer({"endpoints": {"x": ep}}, "user").endpoints["x"].ca_file is None
     with_ca = parse_layer({"endpoints": {"x": {**ep, "ca_file": "/etc/x.crt"}}}, "org")
     assert with_ca.endpoints["x"].ca_file == "/etc/x.crt"
-    for bad in ("", 5):
+    for bad in ("", 5, "certs/roots.crt", "./roots.crt"):
         with pytest.raises(PolicyError, match="ca_file"):
             parse_layer({"endpoints": {"x": {**ep, "ca_file": bad}}}, "user")

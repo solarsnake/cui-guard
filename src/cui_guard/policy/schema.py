@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -173,6 +174,10 @@ def _parse_endpoint(name: str, raw: Any) -> Endpoint:
     if not _credential_ok(cred):
         raise PolicyError(f"{where}.credential: invalid credential {cred!r}")
     ca_file = _str(f"{where}.ca_file", t["ca_file"]) if "ca_file" in t else None
+    # A relative path would resolve against the launcher's working directory, which is
+    # the agent's project directory.
+    if ca_file is not None and not os.path.isabs(ca_file):
+        raise PolicyError(f"{where}.ca_file: must be an absolute path")
     return Endpoint(
         name, url, formats, _trust(f"{where}.trust", t.get("trust", "public")), cred, ca_file
     )

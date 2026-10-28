@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import ssl
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from cui_guard import cli
+from cui_guard import fips as fips_mod
 from cui_guard.fips import (
     FipsCheck,
     FipsError,
@@ -85,6 +87,33 @@ def test_probe_exception_fails_closed():
     assert not checks["openssl-fips-provider"].ok
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"), [("1\n", True), ("0\n", False), ("", False), (None, False)]
+)
+def test_kernel_probe_reads_the_flag(tmp_path, monkeypatch, content, expected):
+    flag = tmp_path / "fips_enabled"
+    if content is not None:
+        flag.write_text(content)
+    monkeypatch.setattr(fips_mod, "KERNEL_FIPS_FLAG", flag)
+    assert fips_mod.probe_kernel_fips() is expected
+
+
+def test_hashlib_probe_detects_builtin_sha256(monkeypatch):
+    import hashlib
+
+    _sha2 = pytest.importorskip("_sha2", reason="this Python has no built-in SHA-2")
+    assert fips_mod.probe_hashlib_openssl() is True
+    monkeypatch.setattr(hashlib, "sha256", _sha2.sha256)
+    assert fips_mod.probe_hashlib_openssl() is False
+
+
+def test_real_provider_probe_fails_off_a_fips_host():
+    # No kernel FIPS flag and no OPENSSL_CONF: nothing can have turned the provider on.
+    if fips_mod.probe_kernel_fips() or os.environ.get("OPENSSL_CONF"):
+        pytest.skip("host may legitimately run the FIPS provider")
+    assert fips_mod.probe_openssl_fips_provider() is False
+
+
 def test_host_probes_run_without_error():
     # The real probes on whatever host runs the suite: four checks, and never "ok" for
     # the OS check off Linux.
@@ -112,9 +141,22 @@ def test_default_store_is_certifi_outside_fips_mode():
     assert len(ctx.get_ca_certs()) == _bundle_count(certifi.where())
 
 
+def _expected_platform_store() -> dict[str, str]:
+    paths = ssl.get_default_verify_paths()
+    out = {}
+    if paths.openssl_cafile and os.path.isfile(paths.openssl_cafile):
+        out["cafile"] = paths.openssl_cafile
+    if paths.openssl_capath and os.path.isdir(paths.openssl_capath):
+        out["capath"] = paths.openssl_capath
+    return out
+
+
 def test_fips_mode_uses_platform_store_not_certifi(monkeypatch):
     import certifi
 
+    expected = _expected_platform_store()
+    if not expected:
+        pytest.skip("this OpenSSL has no compiled-in default store")
     calls = []
     real = ssl.create_default_context
 
@@ -128,8 +170,39 @@ def test_fips_mode_uses_platform_store_not_certifi(monkeypatch):
     monkeypatch.setattr(ssl, "create_default_context", spy)
     monkeypatch.setattr(certifi, "where", no_certifi)
     ctx = upstream_ssl_context(None, True)
-    assert calls == [{}]  # OpenSSL's default (platform-managed) store
+    assert calls == [expected]  # OpenSSL's compiled-in paths, passed explicitly
     assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2 and ctx.check_hostname
+
+
+@pytest.mark.parametrize("fips", [False, True])
+def test_ssl_cert_env_cannot_change_trust_roots(tmp_path, monkeypatch, fips):
+    if fips and not _expected_platform_store():
+        pytest.skip("this OpenSSL has no compiled-in default store")
+    ca = _private_copy(tmp_path)
+    certdir = tmp_path / "certdir"
+    certdir.mkdir()
+    shutil.copyfile(ca, certdir / "injected.crt")
+    monkeypatch.setenv("SSL_CERT_FILE", str(ca))
+    monkeypatch.setenv("SSL_CERT_DIR", str(certdir))
+    ctx = upstream_ssl_context(None, fips)
+    names = [
+        dict(x[0] for x in c["subject"]).get("commonName") for c in ctx.get_ca_certs()
+    ]
+    assert "cui-guard synthetic test CA" not in names
+
+
+def test_fips_mode_without_platform_store_refused(tmp_path, monkeypatch):
+    missing = ssl.DefaultVerifyPaths(
+        None,
+        None,
+        "SSL_CERT_FILE",
+        str(tmp_path / "no.crt"),
+        "SSL_CERT_DIR",
+        str(tmp_path / "no"),
+    )
+    monkeypatch.setattr(ssl, "get_default_verify_paths", lambda: missing)
+    with pytest.raises(PolicyError, match="no system trust store"):
+        upstream_ssl_context(None, True)
 
 
 def test_fips_context_restricts_ciphers():
@@ -165,6 +238,37 @@ def test_ca_file_world_writable_refused(tmp_path, mode):
     path.chmod(mode)
     with pytest.raises(PolicyError, match="writable"):
         upstream_ssl_context(str(path), False)
+
+
+def test_ca_file_relative_path_refused(tmp_path, monkeypatch):
+    _private_copy(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(PolicyError, match="absolute"):
+        upstream_ssl_context("ca-bundle.crt", False)
+
+
+def test_ca_file_symlink_target_is_checked(tmp_path):
+    target = _private_copy(tmp_path)
+    link = tmp_path / "link.crt"
+    link.symlink_to(target)
+    assert len(upstream_ssl_context(str(link), False).get_ca_certs()) == 1
+    target.chmod(0o666)
+    with pytest.raises(PolicyError, match="writable"):
+        upstream_ssl_context(str(link), False)
+
+
+def test_ca_file_not_a_bundle_refused(tmp_path):
+    for name, data in (
+        ("binary.crt", bytes(range(256))),
+        ("empty.crt", b"no certs here\n"),
+    ):
+        path = tmp_path / name
+        path.write_bytes(data)
+        path.chmod(0o644)
+        with pytest.raises(PolicyError, match="ca_file"):
+            upstream_ssl_context(str(path), False)
+    with pytest.raises(PolicyError, match="regular file"):
+        upstream_ssl_context(str(tmp_path), False)
 
 
 def test_ca_file_missing_refused(tmp_path):
@@ -234,9 +338,17 @@ def _fips_cfg(tmp_path) -> GatewayConfig:
 
 
 def test_gateway_refuses_start_when_fips_required_and_unavailable(tmp_path):
-    failed = [c.name for c in fips_status() if not c.ok]
+    flag = Path("/proc/sys/crypto/fips_enabled")
+    kernel_on = flag.exists() and flag.read_text().strip() == "1"
+    failed = []  # derived from the host, not from fips_status()
+    if platform.system() != "Linux":
+        failed.append("os")
+    if not kernel_on:
+        failed.append("kernel-fips")
+    if not kernel_on and not os.environ.get("OPENSSL_CONF"):
+        failed.append("openssl-fips-provider")
     if not failed:
-        pytest.skip("every FIPS check passes on this host")
+        pytest.skip("this host may pass every FIPS check")
     cfg = _fips_cfg(tmp_path)
     proc = subprocess.run(
         [sys.executable, "-m", "cui_guard.gateway"],

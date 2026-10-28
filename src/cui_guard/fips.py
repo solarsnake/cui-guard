@@ -180,38 +180,73 @@ def require_fips(probes: Probes | None = None) -> None:
         raise FipsError("\n".join(f"{c.name}: {c.detail}" for c in failed))
 
 
-def _check_ca_file(ca_file: str) -> None:
-    """Refuse a trust store that someone other than its owner or root could rewrite."""
+def _read_ca_file(ca_file: str) -> str:
+    """Read a trust store with one open, checking the opened file itself (no race).
+
+    Symlinks are followed (RHEL bundle paths are symlinks): the target is checked.
+    Refused: a relative path, anything but a regular file, a group- or world-writable
+    file, or one owned by neither the current user nor root.
+    """
+    if not os.path.isabs(ca_file):
+        raise PolicyError(f"ca_file {ca_file}: must be an absolute path")
     try:
-        st = os.stat(ca_file)
+        # O_NONBLOCK: opening a FIFO must not hang; regular-file reads are unaffected.
+        fd = os.open(ca_file, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as e:
         raise PolicyError(f"ca_file {ca_file}: cannot read ({e.strerror})") from None
-    if not stat.S_ISREG(st.st_mode):
-        raise PolicyError(f"ca_file {ca_file}: not a regular file")
-    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise PolicyError(f"ca_file {ca_file}: group- or world-writable")
-    if st.st_uid not in (os.getuid(), 0):
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise PolicyError(f"ca_file {ca_file}: not a regular file")
+        if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise PolicyError(f"ca_file {ca_file}: group- or world-writable")
+        if st.st_uid not in (os.getuid(), 0):
+            raise PolicyError(
+                f"ca_file {ca_file}: owned by neither the current user nor root"
+            )
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read()
+    finally:
+        os.close(fd)
+    try:
+        return data.decode("ascii")
+    except UnicodeDecodeError:
+        raise PolicyError(f"ca_file {ca_file}: not a PEM bundle") from None
+
+
+def _platform_store() -> dict[str, str]:
+    """OpenSSL's compiled-in default store, ignoring SSL_CERT_FILE and SSL_CERT_DIR."""
+    paths = ssl.get_default_verify_paths()
+    store = {}
+    if paths.openssl_cafile and os.path.isfile(paths.openssl_cafile):
+        store["cafile"] = paths.openssl_cafile
+    if paths.openssl_capath and os.path.isdir(paths.openssl_capath):
+        store["capath"] = paths.openssl_capath
+    if not store:
         raise PolicyError(
-            f"ca_file {ca_file}: owned by neither the current user nor root"
+            f"no system trust store at {paths.openssl_cafile} or {paths.openssl_capath}; "
+            "set ca_file for this endpoint"
         )
+    return store
 
 
 def upstream_ssl_context(ca_file: str | None, fips: bool) -> ssl.SSLContext:
     """TLS context for the upstream client: TLS 1.2 floor and verification, always.
 
-    Trust store: `ca_file` when set, in either mode. Otherwise certifi's bundle (as httpx
-    used), or in FIPS mode OpenSSL's default store, which the platform manages and where
-    RHEL and DoD roots are installed. FIPS mode also limits TLS 1.2 to ECDHE with
-    AES-GCM; TLS 1.3 suites are left to the FIPS provider.
+    Trust store: `ca_file` when set, in either mode. Otherwise certifi's bundle, or in
+    FIPS mode OpenSSL's compiled-in default store, which the platform manages and where
+    RHEL and DoD roots are installed. Every store is passed explicitly, so SSL_CERT_FILE
+    and SSL_CERT_DIR never change the trust roots. FIPS mode also limits TLS 1.2 to
+    ECDHE with AES-GCM; TLS 1.3 suites are left to the FIPS provider.
     """
     if ca_file is not None:
-        _check_ca_file(ca_file)
+        pem = _read_ca_file(ca_file)
         try:
-            ctx = ssl.create_default_context(cafile=ca_file)
-        except (OSError, ssl.SSLError) as e:
+            ctx = ssl.create_default_context(cadata=pem)
+        except (ValueError, ssl.SSLError) as e:
             raise PolicyError(f"ca_file {ca_file}: cannot load ({e})") from None
     elif fips:
-        ctx = ssl.create_default_context()
+        ctx = ssl.create_default_context(**_platform_store())
     else:
         ctx = ssl.create_default_context(cafile=certifi.where())
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2

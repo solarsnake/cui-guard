@@ -284,3 +284,10 @@ def test_ca_file_and_fips_loosenings_and_round_trip(tmp_path):
     assert loosenings(back, approved) == []  # unchanged since the last approval
     p.write_text('{"source": "user", "fips": "on"}')
     assert load_snapshot(p) is None
+
+
+def test_ca_file_only_change_reports_only_the_trust_store():
+    cred = {**APPROVED_EP["corp"], "credential": "env:CORP_KEY"}
+    before = _layer(default_lane="corp", endpoints={"corp": cred})
+    after = _layer(default_lane="corp", endpoints={"corp": {**cred, "ca_file": "/etc/a.crt"}})
+    assert loosenings(before, after) == ["endpoint corp trust store changed (ca_file)"]
