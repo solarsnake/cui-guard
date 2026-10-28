@@ -1,0 +1,4 @@
+python 3.15.0
+uv 0.0.0
+ruff 0.0.0
+pytest 0.0.0

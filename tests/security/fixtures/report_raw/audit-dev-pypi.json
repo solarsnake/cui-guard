@@ -1,0 +1,1 @@
+{"dependencies":[{"name":"examplepkg","version":"1.0.0","vulns":[{"id":"PYSEC-2026-1","aliases":["CVE-2026-0001"],"description":"synthetic advisory text that must not be copied","fix_versions":["1.0.1"]}]}],"fixes":[]}
