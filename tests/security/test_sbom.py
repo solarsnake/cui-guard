@@ -104,22 +104,72 @@ def test_sbom_is_deterministic(tmp_path):
     assert a.read_bytes() == b.read_bytes()
 
 
-@pytest.mark.network
-def test_wheel_embeds_sbom(tmp_path):
-    # sbom-files is resolved from the project root, so build in a copy-free way:
-    # create the SBOM at its fixed path, then build the wheel.
-    assert run("build", "--out", ROOT / EMBEDDED).returncode == 0
+def copy_tree(dest: Path) -> Path:
+    """A clean copy of the tree with no build/ directory, as a fresh clone would have."""
+    shutil.copytree(
+        ROOT,
+        dest,
+        ignore=shutil.ignore_patterns(
+            ".venv",
+            ".git",
+            ".superpowers",
+            "build",
+            "__pycache__",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".hypothesis",
+        ),
+    )
+    return dest
+
+
+def uv_build(tree: Path, out: Path, *args: str) -> subprocess.CompletedProcess[str]:
     uv = shutil.which("uv") or str(ROOT / ".venv" / "bin" / "uv")
-    r = subprocess.run(
-        [uv, "build", "--wheel", "--out-dir", str(tmp_path)],
+    return subprocess.run(
+        [uv, "build", *args, "--out-dir", str(out)],
         check=False,
         capture_output=True,
         text=True,
         env={**ENV, "UV_PYTHON_DOWNLOADS": "never"},
-        cwd=ROOT,
+        cwd=tree,
+    )
+
+
+def wheel_names(out: Path) -> list[str]:
+    (wheel,) = out.glob("*.whl")
+    with zipfile.ZipFile(wheel) as z:
+        return z.namelist()
+
+
+@pytest.mark.network
+def test_wheel_builds_without_sbom(tmp_path):
+    tree = copy_tree(tmp_path / "tree")
+    assert not (tree / "build").exists()
+    r = uv_build(tree, tmp_path / "out")
+    assert r.returncode == 0, r.stderr
+    assert not [n for n in wheel_names(tmp_path / "out") if "/sboms/" in n]
+
+
+@pytest.mark.network
+def test_wheel_from_sdist_embeds_sbom(tmp_path):
+    tree = copy_tree(tmp_path / "tree")
+    sbom = tree / EMBEDDED
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(tree / "scripts" / "security" / "sbom.py"),
+            "build",
+            "--out",
+            str(sbom),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=ENV,
     )
     assert r.returncode == 0, r.stderr
-    (wheel,) = tmp_path.glob("*.whl")
-    version = wheel.name.split("-")[1]
-    with zipfile.ZipFile(wheel) as z:
-        assert f"cui_guard-{version}.dist-info/sboms/cui-guard.cdx.json" in z.namelist()
+    # No --wheel/--sdist flag: uv builds the sdist, then the wheel from the sdist.
+    r = uv_build(tree, tmp_path / "out")
+    assert r.returncode == 0, r.stderr
+    names = wheel_names(tmp_path / "out")
+    assert "cui_guard-0.1.0.dist-info/sboms/cui-guard.cdx.json" in names

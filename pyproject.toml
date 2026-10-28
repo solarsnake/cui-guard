@@ -27,7 +27,12 @@ cui-guard = "cui_guard.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cui_guard"]
-sbom-files = ["build/sbom/cui-guard.cdx.json"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["build/sbom/cui-guard.cdx.json"]
 
 [tool.uv]
 exclude-newer = "7 days"

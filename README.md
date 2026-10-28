@@ -20,6 +20,8 @@ uv sync --group dev               # or: pip install -e . --group dev  (pip 25.1 
 scripts/check all                 # lint, test, lock
 ```
 
+Release wheels embed the SBOM (`scripts/check sbom` builds it); dev builds may not.
+
 ## Quick start
 
 ```

@@ -103,21 +103,26 @@ gate_sbom() {
     "$py" scripts/security/sbom.py check build/sbom/cui-guard.cdx.json)
 }
 
-# Build the SBOM, then the sdist and wheel twice into fresh directories with a fixed
-# SOURCE_DATE_EPOCH (HEAD commit time); every artifact must have an identical SHA-256.
+# Build the SBOM, then run `uv build` twice into fresh directories with a fixed
+# SOURCE_DATE_EPOCH (HEAD commit time); the wheel must embed the SBOM and every artifact must have an identical SHA-256.
 gate_build() {
-  local uv py epoch f rc=0
+  local uv py epoch f listing rc=0
   uv="$(tool uv)"
   py="$(tool python)"
   epoch="$(git -C "$ROOT" log -1 --format=%ct)" || return 1
   export SOURCE_DATE_EPOCH="$epoch"
   gate_sbom >/dev/null || return 1
   rm -rf "$ROOT/build/dist-a" "$ROOT/build/dist-b"
-  # The wheel is built from the source tree, not from the sdist: the SBOM is gitignored,
-  # so the sdist (and a wheel built from it) would not carry it.
-  (cd "$ROOT" && for d in a b; do
-    "$uv" build --sdist --out-dir "build/dist-$d" && "$uv" build --wheel --out-dir "build/dist-$d"
-  done) >/dev/null || return 1
+  # Standard flow: SBOM first, then sdist and the wheel built from it.
+  (cd "$ROOT" && for d in a b; do "$uv" build --out-dir "build/dist-$d"; done) >/dev/null || return 1
+  for d in a b; do
+    # Capture first: grep -q closing the pipe early would trip pipefail.
+    listing="$(unzip -l "$ROOT"/build/dist-$d/*.whl)"
+    case "$listing" in
+      *.dist-info/sboms/cui-guard.cdx.json*) ;;
+      *) echo "wheel in dist-$d lacks the embedded SBOM" >&2; return 1 ;;
+    esac
+  done
   [ -n "$(ls "$ROOT/build/dist-a")" ] || { echo "no artifacts built" >&2; return 1; }
   [ "$(ls "$ROOT/build/dist-a")" = "$(ls "$ROOT/build/dist-b")" ] || { echo "artifact names differ" >&2; return 1; }
   for f in $(ls "$ROOT/build/dist-a"); do
