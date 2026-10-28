@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import subprocess
+import sys
 import tomllib
 from datetime import date
 from pathlib import Path
@@ -102,3 +104,77 @@ def test_gitleaks_config_allowlists_only_test_paths():
 
 def test_zizmor_requires_hash_pins():
     assert "hash-pin" in (ROOT / ".github/zizmor.yml").read_text()
+
+
+def test_entry_without_id_flagged():
+    vex = vex_with()
+    del vex["vulnerabilities"][0]["id"]
+    assert "missing field id" in " ".join(problems(vex, TODAY, None))
+
+
+def _run_check(
+    tmp_path: Path, vex: dict, reports: list[dict]
+) -> subprocess.CompletedProcess:
+    # Run the CLI against a copy of the repo layout so the real VEX is untouched.
+    (tmp_path / "security").mkdir()
+    (tmp_path / "scripts" / "security").mkdir(parents=True)
+    (tmp_path / "security" / "vex.cdx.json").write_text(json.dumps(vex))
+    script = tmp_path / "scripts" / "security" / "vex.py"
+    script.write_text((ROOT / "scripts" / "security" / "vex.py").read_text())
+    files = []
+    for i, report in enumerate(reports):
+        f = tmp_path / f"r{i}.json"
+        f.write_text(json.dumps(report))
+        files.append(str(f))
+    return subprocess.run(
+        [sys.executable, str(script), "check", *files],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+
+def _report(vid: str, aliases: list[str] | None = None) -> dict:
+    return {
+        "dependencies": [
+            {
+                "name": "x",
+                "version": "1",
+                "vulns": [{"id": vid, "aliases": aliases or []}],
+            }
+        ]
+    }
+
+
+def test_cli_stale_entry_fails(tmp_path):
+    vex = vex_with(review_by="2099-01-01", recorded="2099-01-01")
+    r = _run_check(tmp_path, vex, [{"dependencies": []}])
+    assert r.returncode == 1
+    assert "matches no finding" in r.stderr
+
+
+def test_cli_untriaged_finding_fails(tmp_path):
+    r = _run_check(tmp_path, load(), [_report("PYSEC-2026-9")])
+    assert r.returncode == 1
+    assert "untriaged" in r.stderr
+
+
+def test_cli_triaged_by_alias_passes(tmp_path):
+    vex = vex_with(id="CVE-2099-1", review_by="2099-01-01", recorded="2099-01-01")
+    r = _run_check(tmp_path, vex, [_report("PYSEC-2026-9", ["CVE-2099-1"])])
+    assert r.returncode == 0, r.stderr
+
+
+def test_cli_unreadable_result_fails(tmp_path):
+    (tmp_path / "bad.json").write_text("")
+    r = _run_check(tmp_path, load(), [])
+    assert r.returncode == 0
+    script = tmp_path / "scripts" / "security" / "vex.py"
+    bad = subprocess.run(
+        [sys.executable, str(script), "check", str(tmp_path / "bad.json")],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert bad.returncode == 1
+    assert "unreadable" in bad.stderr

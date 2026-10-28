@@ -65,21 +65,25 @@ pip_audit() {
   fi
 }
 
-# Every lock file is audited against both advisory sources; any finding from either fails.
-# IDs triaged in security/vex.cdx.json are passed through --ignore-vuln, then the VEX
-# itself is checked for expired, over-long or incomplete entries.
+# Every lock file is audited against both advisory sources (one unfiltered JSON run each).
+# vex.py check fails on any finding not triaged in security/vex.cdx.json (matching
+# --ignore-vuln semantics: ID or alias), on an unreadable result, and on expired,
+# over-long, incomplete or stale (matches no finding) VEX entries.
 gate_audit() {
-  local ids=() id f src
-  while IFS= read -r id; do
-    [ -n "$id" ] && ids+=(--ignore-vuln "$id")
-  done < <("$(tool python)" "$ROOT/scripts/security/vex.py" ids)
+  local tmp f src out=() rc=0
+  tmp="$(mktemp -d)"
   for f in runtime dev; do
     for src in pypi osv; do
-      pip_audit --strict --require-hashes -s "$src" ${ids[@]+"${ids[@]}"} \
-        -r "$ROOT/requirements/$f.lock.txt" || return 1
+      # pip-audit exits 1 when it finds something; vex.py judges the JSON, and a run
+      # that produced no valid JSON fails closed there.
+      pip_audit --strict --require-hashes -s "$src" -f json \
+        -r "$ROOT/requirements/$f.lock.txt" >"$tmp/$f-$src.json" || true
+      out+=("$tmp/$f-$src.json")
     done
   done
-  "$(tool python)" "$ROOT/scripts/security/vex.py" check
+  "$(tool python)" "$ROOT/scripts/security/vex.py" check "${out[@]}" || rc=$?
+  rm -rf "$tmp"
+  return "$rc"
 }
 gate_secrets() {
   command -v gitleaks >/dev/null 2>&1 || { SKIP_REASON="gitleaks not installed; runs in CI"; return "$SKIP_RC"; }
@@ -119,7 +123,7 @@ run_gate() {
 failed=0
 for arg in "$@"; do
   if [ "$arg" = "all" ]; then
-    for g in lint test lock; do
+    for g in lint test lock audit secrets workflows; do
       run_gate "$g" || failed=1
     done
   else
