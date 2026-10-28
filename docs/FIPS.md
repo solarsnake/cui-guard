@@ -59,7 +59,7 @@ cui-guard doctor --require-fips
 
 ## Trust store for internal endpoints
 
-An endpoint can set `ca_file`, a path to a PEM bundle that replaces the default trust store for that endpoint. This is how an internal model server with a DoD PKI or other internal certificate is trusted. Without `ca_file`, the trust store is the default store of the interpreter's OpenSSL (on RHEL, the system trust store).
+An endpoint can set `ca_file`, a path to a PEM bundle that replaces the default trust store for that endpoint. This is how an internal model server with a DoD PKI or other internal certificate is trusted. `ca_file` replaces the store in FIPS mode and outside it. Without `ca_file`, FIPS mode uses the default store of the interpreter's OpenSSL, which the platform manages (on RHEL, the system trust store, where DoD roots added with `update-ca-trust` also land). Outside FIPS mode the default is certifi's public bundle, as httpx uses.
 
 ```
 [endpoints.internal]

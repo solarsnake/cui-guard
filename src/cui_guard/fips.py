@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+import certifi  # httpx's dependency; the trust store httpx used before this module
+
 from cui_guard.policy.schema import PolicyError
 
 # Month each CPython minor version reaches upstream end of life. `python_support` reports
@@ -197,8 +199,10 @@ def _check_ca_file(ca_file: str) -> None:
 def upstream_ssl_context(ca_file: str | None, fips: bool) -> ssl.SSLContext:
     """TLS context for the upstream client: TLS 1.2 floor and verification, always.
 
-    `ca_file` replaces the default trust store for that endpoint. FIPS mode also limits
-    TLS 1.2 to ECDHE with AES-GCM; TLS 1.3 suites are left to the FIPS provider.
+    Trust store: `ca_file` when set, in either mode. Otherwise certifi's bundle (as httpx
+    used), or in FIPS mode OpenSSL's default store, which the platform manages and where
+    RHEL and DoD roots are installed. FIPS mode also limits TLS 1.2 to ECDHE with
+    AES-GCM; TLS 1.3 suites are left to the FIPS provider.
     """
     if ca_file is not None:
         _check_ca_file(ca_file)
@@ -206,8 +210,10 @@ def upstream_ssl_context(ca_file: str | None, fips: bool) -> ssl.SSLContext:
             ctx = ssl.create_default_context(cafile=ca_file)
         except (OSError, ssl.SSLError) as e:
             raise PolicyError(f"ca_file {ca_file}: cannot load ({e})") from None
-    else:
+    elif fips:
         ctx = ssl.create_default_context()
+    else:
+        ctx = ssl.create_default_context(cafile=certifi.where())
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED

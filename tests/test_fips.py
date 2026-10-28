@@ -101,6 +101,37 @@ def test_tls_floor_always_set():
     assert ctx.check_hostname is True
 
 
+def _bundle_count(path: str) -> int:
+    return Path(path).read_text(encoding="ascii").count("-----" + "BEGIN CERTIFICATE")
+
+
+def test_default_store_is_certifi_outside_fips_mode():
+    import certifi
+
+    ctx = upstream_ssl_context(None, False)
+    assert len(ctx.get_ca_certs()) == _bundle_count(certifi.where())
+
+
+def test_fips_mode_uses_platform_store_not_certifi(monkeypatch):
+    import certifi
+
+    calls = []
+    real = ssl.create_default_context
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs)
+        return real(*args, **kwargs)
+
+    def no_certifi() -> str:
+        raise AssertionError("certifi used in FIPS mode")
+
+    monkeypatch.setattr(ssl, "create_default_context", spy)
+    monkeypatch.setattr(certifi, "where", no_certifi)
+    ctx = upstream_ssl_context(None, True)
+    assert calls == [{}]  # OpenSSL's default (platform-managed) store
+    assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2 and ctx.check_hostname
+
+
 def test_fips_context_restricts_ciphers():
     ctx = upstream_ssl_context(None, True)
     assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2
@@ -117,13 +148,15 @@ def _private_copy(tmp_path: Path) -> Path:
     return path
 
 
-def test_ca_file_replaces_default_store(tmp_path):
-    ctx = upstream_ssl_context(str(_private_copy(tmp_path)), False)
+@pytest.mark.parametrize("fips", [False, True])
+def test_ca_file_replaces_default_store(tmp_path, fips):
+    ctx = upstream_ssl_context(str(_private_copy(tmp_path)), fips)
     certs = ctx.get_ca_certs()
     assert len(certs) == 1
     subject = dict(x[0] for x in certs[0]["subject"])
     assert subject["commonName"] == "cui-guard synthetic test CA"
     assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2
+    assert ctx.check_hostname is True
 
 
 @pytest.mark.parametrize("mode", [0o666, 0o664, 0o646])
