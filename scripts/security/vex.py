@@ -72,11 +72,21 @@ def problems(vex: dict, today: date, audited_ids: set[str] | None) -> list[str]:
 
 
 def audit_findings(report: dict) -> list[set[str]]:
-    """One set per finding: its ID plus aliases (pip-audit ignores by either)."""
+    """One set per finding: its ID plus aliases (pip-audit ignores by either).
+
+    Raises ValueError for anything that is not a complete pip-audit report: no
+    `dependencies` list, or a dependency pip-audit skipped (the --strict guarantee).
+    """
+    deps = report.get("dependencies") if isinstance(report, dict) else None
+    if not isinstance(deps, list):
+        raise TypeError("no dependencies list")
+    for dep in deps:
+        if dep.get("skip_reason"):
+            raise ValueError(
+                f"dependency {dep.get('name')} was not audited: {dep['skip_reason']}"
+            )
     return [
-        {v["id"], *v.get("aliases", [])}
-        for dep in report.get("dependencies", [])
-        for v in dep.get("vulns", [])
+        {v["id"], *v.get("aliases", [])} for dep in deps for v in dep.get("vulns", [])
     ]
 
 
@@ -99,9 +109,15 @@ def main(argv: list[str]) -> int:
                 try:
                     report = json.loads(Path(path).read_text())
                     findings = audit_findings(report)
-                except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    AttributeError,
+                ) as exc:
                     found.append(
-                        f"{path}: unreadable pip-audit result (audit did not run)"
+                        f"{path}: unusable pip-audit result, audit incomplete ({exc})"
                     )
                     continue
                 for ids in findings:

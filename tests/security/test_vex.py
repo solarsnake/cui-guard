@@ -177,4 +177,22 @@ def test_cli_unreadable_result_fails(tmp_path):
         text=True,
     )
     assert bad.returncode == 1
-    assert "unreadable" in bad.stderr
+    assert "unusable" in bad.stderr
+
+
+def test_cli_skipped_dependency_fails(tmp_path):
+    report = {
+        "dependencies": [{"name": "x", "version": "1", "skip_reason": "not on index"}]
+    }
+    r = _run_check(tmp_path, load(), [report])
+    assert r.returncode == 1
+    assert "was not audited" in r.stderr
+
+
+def test_cli_non_report_json_fails(tmp_path):
+    for i, body in enumerate(({}, {"error": "boom"}, [], {"dependencies": None})):
+        d = tmp_path / f"c{i}"
+        d.mkdir()
+        r = _run_check(d, load(), [body])
+        assert r.returncode == 1, body
+        assert "no dependencies list" in r.stderr
