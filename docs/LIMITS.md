@@ -1,5 +1,7 @@
 # Limits of cui-guard
 
+See also [THREAT-MODEL.md](THREAT-MODEL.md) and [SECURITY-ASSURANCE.md](SECURITY-ASSURANCE.md).
+
 cui-guard is a technical control that reduces mistakes. It makes no statement about whether any use of an LLM is permitted for your data. Read this before relying on it.
 
 ## What it cannot promise

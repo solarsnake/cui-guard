@@ -89,6 +89,24 @@ cui-guard does not make CUI safe to send to a public LLM.
 - It is not a guarantee. Detection is heuristic; read [docs/LIMITS.md](docs/LIMITS.md) before relying on it.
 - It makes no statement about whether any LLM use is permitted for your data. That is a decision for you and your organization.
 
+## Verifying a release
+
+Each release carries an SBOM, build provenance and a hash-locked runtime set. To check a download:
+
+```
+gh attestation verify cui_guard-<version>-py3-none-any.whl --repo <owner>/cui-guard
+pip install --require-hashes -r runtime.lock.txt
+```
+
+The full steps, including the PyPI attestation check and SBOM extraction, are in [docs/SECURITY-ASSURANCE.md](docs/SECURITY-ASSURANCE.md).
+
+## Security
+
+- [SECURITY.md](SECURITY.md): how to report a vulnerability, supported versions, disclosure.
+- [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md): assets, adversaries, controls and the tests that pin them.
+- [docs/SECURITY-ASSURANCE.md](docs/SECURITY-ASSURANCE.md): what a release carries, how to verify it, known gaps.
+- [docs/MAINTAINER-SECURITY.md](docs/MAINTAINER-SECURITY.md): maintainer checklist.
+
 ## License
 
 Apache-2.0.
