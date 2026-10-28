@@ -64,6 +64,12 @@ There is no project-level layer. The user config can be edited by the agent, so 
 
 `egress_rehydration = "withhold" | "allow"` (default `withhold`, set in the built-in layer as a default; between the user and organization layers the stricter value wins): placeholders in a tool call are not rehydrated when any of its strings names an outside host (a URL, `user@host`, a `name.tld` with a common TLD, or an IP literal that is not loopback, a session placeholder, or one of your identifier domains and IP ranges), so a hostile model cannot get the agent to send real values out. Each such response adds a `rehydrate.withheld` audit record with a count. Setting `allow` is a loosening and needs OS authentication. See [docs/LIMITS.md](docs/LIMITS.md).
 
+## TLS and FIPS mode
+
+Every upstream connection uses TLS 1.2 or later with certificate verification. A lane can set `ca_file`, a PEM bundle that replaces the default trust store for that lane (for example DoD PKI roots for an internal model server); a user-layer `ca_file` is a loosening and needs OS authentication.
+
+`fips = "require"` (default `off`; the strictest layer wins) makes the launcher and gateway refuse to start unless the platform's FIPS 140-3 validated module is in use. It is Linux-only. Check a machine with `cui-guard doctor` (add `--require-fips` to exit 1 when a check fails). See [docs/FIPS.md](docs/FIPS.md).
+
 ## Overrides
 
 A blocked request can sometimes be overridden by a person at the keyboard: the gateway shows an on-screen warning, asks for a typed justification, and requires OS authentication (Touch ID or password on macOS, which needs the `[macos]` extra; on Linux a zenity or kdialog dialog for the justification and `pkexec` for authentication, with no terminal prompt). There is no CLI command and no HTTP route that grants an override, so the agent cannot approve its own. Classified markings and unparseable content cannot be overridden. Organizations can disable overrides entirely. Each override is written to the audit log with its justification.
@@ -106,6 +112,7 @@ The full steps, including the PyPI attestation check and SBOM extraction, are in
 - [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md): assets, adversaries, controls and the tests that pin them.
 - [docs/SECURITY-ASSURANCE.md](docs/SECURITY-ASSURANCE.md): what a release carries, how to verify it, known gaps.
 - [docs/MAINTAINER-SECURITY.md](docs/MAINTAINER-SECURITY.md): maintainer checklist.
+- [docs/FIPS.md](docs/FIPS.md): FIPS mode deployment guide.
 
 ## License
 

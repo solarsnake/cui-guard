@@ -27,6 +27,13 @@ cui-guard is a technical control that reduces mistakes. It makes no statement ab
   - **Size limit.** A tool call whose text is longer than 1 MiB (1,048,576 characters) is treated as naming an outside host without being read, so all its placeholders are withheld. This keeps the decision within the latency budget.
 - **Images and other opaque content are replaced, not read.** On public lanes they are removed and a notice is sent instead. On approved and local lanes they are forwarded without inspection, so a secret or identifier shown inside an image is not caught there. This exception is pinned by a leak test.
 
+## TLS and FIPS mode
+
+- **Every upstream has a TLS 1.2 floor.** The gateway's upstream client always requires TLS 1.2 or later and verifies the certificate and host name, so a model server that only speaks TLS 1.0 or 1.1 cannot be used. Plain `http://` is still allowed for loopback lanes only.
+- **`ca_file` replaces the default trust store.** A lane with `ca_file` trusts only the certificates in that bundle, not the public roots, so the bundle must hold every root that lane's server may chain to. Without `ca_file`, the trust store is the default store of the interpreter's OpenSSL, not a bundle shipped with cui-guard; a Python whose OpenSSL has no default store (for example a python.org build on macOS before "Install Certificates" was run) cannot reach any HTTPS lane.
+- **FIPS mode is Linux-only.** `fips = "require"` is refused on macOS, because python.org and Homebrew Python link their own OpenSSL rather than Apple's validated module. On Linux it also needs the kernel in FIPS mode and an interpreter that uses the distribution's OpenSSL FIPS provider. See [FIPS.md](FIPS.md).
+- **FIPS mode covers the connection, not the endpoint.** It covers TLS, hashing and randomness inside cui-guard. It says nothing about the rest of the interpreter or about the model server behind the endpoint.
+
 ## Credentials and the agent
 
 - **Passthrough trade-off.** In passthrough mode the agent keeps its own login and the gateway forwards it. The guard does not hold the credential, so it cannot stop the agent from reaching the provider by some route that skips the gateway. Use gateway credential mode when you need the guard to be the only path. In gateway mode the agent never sees the upstream key.

@@ -40,6 +40,21 @@ jobs:
       - name: Gates
         run: scripts/check lint lock test leak fuzz
 
+  fips:
+    name: FIPS provider checks (UBI 9 container)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: FIPS gate
+        # Fail, not skip, when the runner has no working Docker daemon.
+        run: |
+          docker info > /dev/null
+          scripts/check fips
+
   security:
     name: security gates and report
     runs-on: ubuntu-latest

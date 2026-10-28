@@ -36,7 +36,16 @@ def test_security_md_sections():
         assert needed in headings, needed
     assert "Report a vulnerability" in text
     assert "<maintainer contact — fill in before publishing>" in text
-    assert "doctor" in text and "end of life" in text
+    assert "`cui-guard doctor` reports `end-of-life`" in text and "end of life" in text
+    assert "planned, not yet shipped" not in text and "TODO" not in text
+
+
+def test_fips_doc_framing():
+    text = read("docs/FIPS.md")
+    assert "uses the platform's FIPS 140-3 validated module" in text
+    assert "FIPS compliant" not in text
+    for check in ("`os`", "`openssl-fips-provider`", "`hashlib-openssl`", "`kernel-fips`"):
+        assert check in text, check
 
 
 def test_no_compliance_claims():
