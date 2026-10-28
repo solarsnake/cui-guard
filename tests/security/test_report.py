@@ -21,6 +21,13 @@ _spec.loader.exec_module(_canaries)
 CANARIES = _canaries.CANARIES
 
 
+def copy_fixture(raw: Path) -> Path:
+    """The raw fixture plus the fips gate's status (Docker present, provider checks passed)."""
+    shutil.copytree(FIXTURE, raw)
+    (raw / "fips.status").write_text("PASS 40\n")
+    return raw
+
+
 def render(raw: Path, out: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT), "render", "--raw", str(raw), "--out", str(out)],
@@ -32,7 +39,7 @@ def render(raw: Path, out: Path) -> subprocess.CompletedProcess[str]:
 
 def test_report_renders_from_raw_fixture(tmp_path):
     out = tmp_path / "out"
-    done = render(FIXTURE, out)
+    done = render(copy_fixture(tmp_path / "raw"), out)
     assert done.returncode == 0, done.stderr
     summary = (out / "summary.md").read_text()
     assert "| Gate | Status |" in summary
@@ -71,7 +78,7 @@ def test_report_renders_from_raw_fixture(tmp_path):
 
 def test_report_contains_no_canaries(tmp_path):
     raw = tmp_path / "raw"
-    shutil.copytree(FIXTURE, raw)
+    copy_fixture(raw)
     text = " ".join(CANARIES.values())
     (raw / "test.xml").write_text(
         '<?xml version="1.0"?><testsuites><testsuite tests="1" failures="1">'
@@ -106,7 +113,7 @@ def test_report_contains_no_canaries(tmp_path):
 
 def test_report_exit_code_reflects_failures(tmp_path):
     raw = tmp_path / "raw"
-    shutil.copytree(FIXTURE, raw)
+    copy_fixture(raw)
     assert render(raw, tmp_path / "ok").returncode == 0
     (raw / "lint.status").write_text("FAIL 2\n")
     out = tmp_path / "bad"
@@ -124,7 +131,7 @@ def test_report_exit_code_reflects_failures(tmp_path):
 
 def run_case(tmp_path, mutate):
     raw = tmp_path / "raw"
-    shutil.copytree(FIXTURE, raw)
+    copy_fixture(raw)
     mutate(raw)
     out = tmp_path / "out"
     done = render(raw, out)
@@ -193,8 +200,9 @@ def test_section_exception_still_writes_report(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod, "known_gaps", boom)
     out = tmp_path / "out"
+    raw = copy_fixture(tmp_path / "raw")
     monkeypatch.setattr(
-        sys, "argv", ["report.py", "render", "--raw", str(FIXTURE), "--out", str(out)]
+        sys, "argv", ["report.py", "render", "--raw", str(raw), "--out", str(out)]
     )
     assert mod.main() == 1
     report = json.loads((out / "report.json").read_text())
@@ -223,3 +231,18 @@ def test_summary_lists_skipped_gates(tmp_path):
     done, _, summary = run_case(tmp_path, lambda raw: None)
     assert done.returncode == 0
     assert "Overall: PASS (2 skipped: secrets, workflows)" in summary
+
+
+def test_fips_gate_reported_with_docker_skip_reason(tmp_path):
+    done, report, summary = run_case(
+        tmp_path, lambda raw: (raw / "fips.status").write_text("SKIPPED 0 docker not available\n")
+    )
+    assert done.returncode == 0
+    assert report["gates"]["fips"] == {"status": "SKIPPED", "seconds": 0, "reason": "docker not available"}
+    assert "Overall: PASS (3 skipped: secrets, workflows, fips)" in summary
+
+
+def test_missing_fips_status_fails(tmp_path):
+    done, report, _ = run_case(tmp_path, lambda raw: (raw / "fips.status").unlink())
+    assert done.returncode == 1
+    assert report["gates"]["fips"]["status"] == "MISSING"

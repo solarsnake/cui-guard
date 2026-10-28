@@ -5,6 +5,9 @@ profile = "cui"
 default_lane = "anthropic"
 # Tool-call strings that name an outside host keep their placeholders (spec 5 H4).
 egress_rehydration = "withhold"
+# FIPS mode (design 8.3) is opt-in: "require" refuses to start unless every check in
+# `cui-guard doctor` passes. Layers merge strictest, so an organization can require it.
+fips = "off"
 
 [audit]
 # "{state_dir}" is expanded when the effective policy is built.

@@ -261,3 +261,26 @@ def test_egress_rehydration_allow_is_loosening(tmp_path):
     assert loosenings(back, allow) == []  # unchanged since the last approval
     p.write_text('{"source": "user", "egress_rehydration": "off"}')
     assert load_snapshot(p) is None
+
+
+def test_ca_file_and_fips_loosenings_and_round_trip(tmp_path):
+    ca_eps = {"corp": {**APPROVED_EP["corp"], "ca_file": "/etc/a.crt"}}
+    with_ca = _layer(endpoints=ca_eps)
+    other_ca = _layer(endpoints={"corp": {**APPROVED_EP["corp"], "ca_file": "/tmp/b.crt"}})
+    plain = _layer(endpoints=APPROVED_EP)
+    msg = "endpoint corp trust store changed (ca_file)"
+    assert msg in loosenings(None, with_ca)
+    assert msg in loosenings(with_ca, other_ca)
+    assert msg in loosenings(with_ca, plain)  # back to the default store is a change too
+    assert msg not in loosenings(plain, plain)
+    assert loosenings(None, _layer(fips="require")) == []
+    assert loosenings(_layer(fips="require"), _layer()) == ["fips requirement removed"]
+    approved = _layer(fips="require", endpoints=ca_eps)
+    p = tmp_path / "snap.json"
+    save_snapshot(p, approved)
+    back = load_snapshot(p)
+    assert back is not None and back.fips == "require"
+    assert back.endpoints["corp"].ca_file == "/etc/a.crt"
+    assert loosenings(back, approved) == []  # unchanged since the last approval
+    p.write_text('{"source": "user", "fips": "on"}')
+    assert load_snapshot(p) is None

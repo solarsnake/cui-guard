@@ -24,13 +24,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-GATES = ["lint", "lock", "test", "leak", "fuzz", "audit", "secrets", "workflows", "sbom", "build"]  # fmt: skip
+GATES = ["lint", "lock", "test", "leak", "fuzz", "audit", "secrets", "workflows", "sbom", "build", "fips"]  # fmt: skip
 PYTEST_GATES = ("test", "leak", "fuzz")
 STATUSES = {"PASS", "FAIL", "SKIPPED"}
 HEX64 = re.compile(r"[0-9a-f]{64}")
 SAFE_NAME = re.compile(r"[A-Za-z0-9._+-]{1,200}")
 # Only the reasons scripts/check writes are echoed; anything else is dropped.
-KNOWN_REASONS = {"gitleaks not installed; runs in CI", "no workflows yet"}
+KNOWN_REASONS = {"gitleaks not installed; runs in CI", "no workflows yet", "docker not available"}
 AUDIT_FILES = [
     f"audit-{lock}-{src}.json" for lock in ("runtime", "dev") for src in ("pypi", "osv")
 ]

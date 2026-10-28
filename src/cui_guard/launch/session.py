@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Literal, Self
 
 from cui_guard import __version__
+from cui_guard.fips import FipsError, require_fips
 from cui_guard.gateway.app import GatewayConfig
 from cui_guard.override.human import select_channel
 from cui_guard.policy.loader import load_effective_policy, state_dir
@@ -142,6 +143,11 @@ def prepare_policy(headless: bool, channel) -> EffectivePolicy:
             f"cui-guard {__version__} is older than the organization minimum "
             f"{policy.min_version}"
         )
+    if policy.fips == "require":
+        try:
+            require_fips()
+        except FipsError as e:
+            raise LaunchError(f'fips = "require" but FIPS checks failed:\n{e}') from e
     # The user config is agent-writable, so any loosening it holds needs OS
     # authentication at every launch. The snapshot never authorizes anything;
     # it only tells the human what changed since they last approved.

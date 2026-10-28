@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from urllib.parse import urlparse
 
 from cui_guard.detect.identifiers import IdentifierConfig
@@ -29,7 +30,7 @@ def _downgrade(ep: Endpoint) -> Endpoint:
     """A `local` endpoint must really be loopback, otherwise it is `public`."""
     host = urlparse(ep.url).hostname
     if ep.trust is Trust.LOCAL and host not in _LOOPBACK:
-        return Endpoint(ep.name, ep.url, ep.formats, Trust.PUBLIC, ep.credential)
+        return replace(ep, trust=Trust.PUBLIC)
     return ep
 
 
@@ -156,6 +157,12 @@ def merge_layers(
         egress = "allow" if all(m == "allow" for m, _ in modes) else "withhold"
         prov["egress_rehydration"] = [src for m, src in modes if m == egress][-1]
 
+    # FIPS mode: strictest across every layer, so "require" anywhere wins over "off".
+    fips, prov["fips"] = "off", "builtin"
+    for layer in layers:
+        if layer.fips == "require":
+            fips, prov["fips"] = "require", layer.source
+
     # Highest layer that sets a scalar wins.
     default_lane = messages_file = poc = None
     audit = AuditConfig(path=DEFAULT_AUDIT_PATH)
@@ -198,4 +205,5 @@ def merge_layers(
         provenance=prov,
         actions=actions,
         egress_rehydration=egress,
+        fips=fips,
     )

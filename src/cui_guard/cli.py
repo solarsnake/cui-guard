@@ -5,14 +5,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 from cui_guard import __version__
 from cui_guard.detect.engine import Detector
 from cui_guard.detect.ner import load_presidio
 from cui_guard.detect.rules import load_builtin_rules
+from cui_guard.fips import (
+    fips_status,
+    openssl_version,
+    python_support,
+    upstream_ssl_context,
+)
 from cui_guard.launch.claude import run_claude
 from cui_guard.launch.codex import run_codex
 from cui_guard.launch.generic import run_generic
@@ -63,6 +71,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("action", choices=["emit"])
     sp.add_argument("target", choices=["claude-managed-settings", "codex-requirements"])
     sp.add_argument("--gateway-url", help="gateway URL for claude-managed-settings")
+    sp = sub.add_parser("doctor", help="show Python, OpenSSL, TLS and FIPS mode checks")
+    sp.add_argument(
+        "--require-fips", action="store_true", help="exit 1 if any FIPS check fails"
+    )
     return p
 
 
@@ -243,6 +255,21 @@ def _cmd_org(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_doctor(require: bool) -> int:
+    """Versions, FIPS checks and TLS settings. Prints no credentials, tokens or identifiers."""
+    policy = _policy()
+    support = python_support(sys.version_info, date.today())
+    print(f"python {platform.python_version()} ({support})")
+    print(f"openssl {openssl_version()}")
+    checks = fips_status()
+    for c in checks:
+        print(f"{c.name} {'ok' if c.ok else 'FAIL'}: {c.detail}")
+    ctx = upstream_ssl_context(None, policy.fips == "require")
+    print(f"tls minimum {ctx.minimum_version.name}")
+    print(f"policy fips={policy.fips}")
+    return 1 if require and not all(c.ok for c in checks) else 0
+
+
 def _dispatch(argv: list[str]) -> int:
     head, rest = _split_dashdash(argv)
     args = _build_parser().parse_args(head)
@@ -269,6 +296,8 @@ def _dispatch(argv: list[str]) -> int:
         return _cmd_policy(args.show_identifiers)
     if cmd == "setup":
         return _cmd_setup_ner(args.yes)
+    if cmd == "doctor":
+        return _cmd_doctor(args.require_fips)
     return _cmd_org(args)
 
 

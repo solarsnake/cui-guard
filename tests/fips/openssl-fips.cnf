@@ -1,0 +1,30 @@
+# OpenSSL configuration for the UBI 9 FIPS container (tests/fips/run_in_ubi9.sh).
+# Loaded through OPENSSL_CONF. It activates only the FIPS provider (plus the base
+# provider, which holds no algorithms, only encoders and decoders for reading
+# certificates and keys) and makes fips=yes the default property query, so every
+# algorithm fetch must be served by the FIPS provider.
+#
+# Red Hat's FIPS provider (/usr/lib64/ossl-modules/fips.so) carries its integrity data
+# inside the module, so RHEL 9 ships no fipsmodule.cnf. The image's own provider
+# section, /etc/pki/tls/fips_local.cnf, is included below; it defines [fips_sect] with
+# activate = 1 and tls1-prf-ems-check = 1.
+
+config_diagnostics = 1
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+alg_section = evp_properties
+
+[evp_properties]
+default_properties = fips=yes
+
+[provider_sect]
+fips = fips_sect
+base = base_sect
+
+[base_sect]
+activate = 1
+
+# Last: an included file leaves its own section open.
+.include /etc/pki/tls/fips_local.cnf

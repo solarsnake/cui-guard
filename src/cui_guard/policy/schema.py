@@ -30,6 +30,8 @@ class Endpoint:
     formats: tuple[str, ...]
     trust: Trust
     credential: str
+    # PEM bundle that replaces the default trust store for this endpoint (design 8.2).
+    ca_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class PolicyLayer:
     override_disabled_rules: frozenset[str] | None = None
     audit: AuditConfig | None = None
     egress_rehydration: Literal["withhold", "allow"] | None = None
+    fips: Literal["off", "require"] | None = None
     # Org-only keys.
     lock_endpoints: bool | None = None
     lock_profile: str | None = None
@@ -65,15 +68,16 @@ class PolicyLayer:
 
 _COMMON_KEYS = {
     "profile", "default_lane", "endpoints", "identifiers", "patterns", "actions",
-    "overrides_enabled", "override_disabled_rules", "audit", "egress_rehydration",
+    "overrides_enabled", "override_disabled_rules", "audit", "egress_rehydration", "fips",
 }  # fmt: skip
 _ORG_KEYS = {
     "lock_endpoints", "lock_profile", "user_config", "min_version", "messages_file", "poc",
 }  # fmt: skip
-_ENDPOINT_KEYS = {"url", "formats", "trust", "credential"}
+_ENDPOINT_KEYS = {"url", "formats", "trust", "credential", "ca_file"}
 _AUDIT_KEYS = {"path", "sink", "on_sink_failure"}
 _ID_KEYS = {"domains", "ip_ranges", "codenames", "jira_projects", "people"}
 EGRESS_MODES = ("withhold", "allow")
+FIPS_MODES = ("off", "require")
 DEFAULT_AUDIT_PATH = "{state_dir}/audit.jsonl"
 
 
@@ -168,8 +172,9 @@ def _parse_endpoint(name: str, raw: Any) -> Endpoint:
         )
     if not _credential_ok(cred):
         raise PolicyError(f"{where}.credential: invalid credential {cred!r}")
+    ca_file = _str(f"{where}.ca_file", t["ca_file"]) if "ca_file" in t else None
     return Endpoint(
-        name, url, formats, _trust(f"{where}.trust", t.get("trust", "public")), cred
+        name, url, formats, _trust(f"{where}.trust", t.get("trust", "public")), cred, ca_file
     )
 
 
@@ -268,6 +273,10 @@ def parse_layer(data: dict, source: str) -> PolicyLayer:
         if mode not in EGRESS_MODES:
             raise PolicyError(f"egress_rehydration: unknown value {mode!r}")
         layer.egress_rehydration = mode
+    if "fips" in data:
+        if data["fips"] not in FIPS_MODES:
+            raise PolicyError(f"fips: unknown value {data['fips']!r}")
+        layer.fips = data["fips"]
     if "lock_endpoints" in data:
         layer.lock_endpoints = _bool("lock_endpoints", data["lock_endpoints"])
     if "lock_profile" in data:
@@ -282,6 +291,12 @@ def parse_layer(data: dict, source: str) -> PolicyLayer:
     if "profiles" in data:
         layer.profiles = _parse_profiles(data["profiles"])
     return layer
+
+
+def _opt_str(v: Any) -> str | None:
+    if v is not None and not isinstance(v, str):
+        raise PolicyError("invalid serialized policy: expected a string or null")
+    return v
 
 
 def _action_name(a: Action) -> str:
@@ -331,6 +346,7 @@ class EffectivePolicy:
     provenance: dict[str, str]
     actions: dict[tuple[str, Trust], Action] = field(default_factory=dict)
     egress_rehydration: str = "withhold"
+    fips: str = "off"
 
     def action_for_class(self, cls: DetClass, trust: Trust) -> Action:
         """Class action; a missing cell fails closed to block-hard."""
@@ -356,6 +372,7 @@ class EffectivePolicy:
                     "formats": list(e.formats),
                     "trust": e.trust.value,
                     "credential": e.credential,
+                    "ca_file": e.ca_file,
                 }
                 for n, e in self.endpoints.items()
             },
@@ -383,6 +400,7 @@ class EffectivePolicy:
                 [k, t.value, _action_name(a)] for (k, t), a in self.actions.items()
             ],
             "egress_rehydration": self.egress_rehydration,
+            "fips": self.fips,
         }
 
     @classmethod
@@ -391,6 +409,8 @@ class EffectivePolicy:
             a = d["audit"]
             if d["egress_rehydration"] not in EGRESS_MODES:
                 raise PolicyError("invalid serialized policy: egress_rehydration")
+            if d["fips"] not in FIPS_MODES:
+                raise PolicyError("invalid serialized policy: fips")
             return cls(
                 profile=d["profile"],
                 endpoints={
@@ -400,6 +420,7 @@ class EffectivePolicy:
                         tuple(e["formats"]),
                         Trust(e["trust"]),
                         e["credential"],
+                        _opt_str(e["ca_file"]),
                     )
                     for n, e in d["endpoints"].items()
                 },
@@ -417,6 +438,7 @@ class EffectivePolicy:
                 provenance=dict(d["provenance"]),
                 actions={(k, Trust(t)): Action.parse(a_) for k, t, a_ in d["actions"]},
                 egress_rehydration=d["egress_rehydration"],
+                fips=d["fips"],
             )
         except PolicyError:
             raise

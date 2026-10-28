@@ -9,8 +9,10 @@ import threading
 
 import uvicorn
 
+from cui_guard.fips import FipsError, require_fips
 from cui_guard.gateway.app import GatewayConfig, create_app
 from cui_guard.override.human import load_messages, select_channel
+from cui_guard.policy.schema import PolicyError
 
 
 async def _serve(cfg: GatewayConfig) -> None:
@@ -44,8 +46,19 @@ def _watch_stdin(stream, exit_fn=os._exit) -> None:
 
 def main() -> None:
     cfg = GatewayConfig.from_json(sys.stdin.readline())
+    if cfg.policy.fips == "require":
+        # Before anything listens: refuse unless the platform's validated module is in use.
+        try:
+            require_fips()
+        except FipsError as e:
+            sys.stderr.write(f"cui-guard gateway: fips = \"require\" but FIPS checks failed:\n{e}\n")
+            sys.exit(1)
     threading.Thread(target=_watch_stdin, args=(sys.stdin,), daemon=True).start()
-    asyncio.run(_serve(cfg))
+    try:
+        asyncio.run(_serve(cfg))
+    except PolicyError as e:  # e.g. a refused ca_file
+        sys.stderr.write(f"cui-guard gateway: {e}\n")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

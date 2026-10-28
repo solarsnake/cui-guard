@@ -32,6 +32,7 @@ from cui_guard.audit import AuditLog, AuditUnavailable, sha256_json
 from cui_guard.detect.engine import Detector
 from cui_guard.detect.ner import load_presidio
 from cui_guard.detect.rules import load_builtin_rules
+from cui_guard.fips import upstream_ssl_context
 from cui_guard.model import Action, DetClass, Trust
 from cui_guard.override.human import load_messages, render, warning_key
 from cui_guard.override.store import OverrideStore
@@ -163,6 +164,7 @@ class GatewayConfig:
                     "formats": list(lane.formats),
                     "trust": lane.trust.value,
                     "credential": lane.credential,
+                    "ca_file": lane.ca_file,
                 },
                 "policy": self.policy.to_dict(),
                 "credential_mode": self.credential_mode,
@@ -182,7 +184,10 @@ class GatewayConfig:
             formats=tuple(ln["formats"]),
             trust=Trust(ln["trust"]),
             credential=ln["credential"],
+            ca_file=ln["ca_file"],
         )
+        if lane.ca_file is not None and not isinstance(lane.ca_file, str):
+            raise ValueError("lane ca_file must be a string or null")
         mode = d["credential_mode"]
         if mode not in ("gateway", "passthrough", "none"):
             raise ValueError(f"unknown credential_mode: {mode!r}")
@@ -257,6 +262,8 @@ def create_app(
     host = (urlparse(lane.url).hostname or "").lower()
     client = httpx.AsyncClient(
         transport=transport,
+        # TLS 1.2 floor and verification for every upstream; ca_file replaces the trust store.
+        verify=upstream_ssl_context(lane.ca_file, policy.fips == "require"),
         trust_env=not is_loopback_host(host),  # never route loopback traffic through a proxy
         timeout=httpx.Timeout(connect=10, read=None, write=60, pool=10),
     )

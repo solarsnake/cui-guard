@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Single entry point for the project's gates: scripts/check <gate> [...]
-# Gates: lint, test, lock, leak, fuzz, audit, secrets, workflows, sbom, build, all, report. Add a gate by appending a case branch.
+# Gates: lint, test, lock, leak, fuzz, audit, secrets, workflows, sbom, build, fips, all, report. Add a gate by appending a case branch.
+# `all` leaves out fips: it needs Docker (CI runs it in its own job; `report` includes it).
 set -euo pipefail
 
 export UV_PYTHON_DOWNLOADS=never
@@ -150,6 +151,16 @@ gate_build() {
   return "$rc"
 }
 
+# FIPS provider checks and a TLS handshake inside Red Hat UBI 9 with the OpenSSL FIPS
+# provider forced on (design 8.3). Needs a working Docker daemon, not just the CLI.
+gate_fips() {
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    SKIP_REASON="docker not available"
+    return "$SKIP_RC"
+  fi
+  "$ROOT/tests/fips/run_in_ubi9.sh"
+}
+
 # Every gate, continuing past failures, with machine output kept in build/security-report/raw
 # (status and duration per gate), then report.py renders summary.md and report.json.
 LAST_STATUS=""
@@ -165,7 +176,7 @@ gate_report() {
     echo "ruff $("$(tool ruff)" --version | cut -d' ' -f2)"
     echo "pytest $("$(tool pytest)" --version 2>&1 | cut -d' ' -f2)"
   } >"$REPORT_RAW/tools.txt"
-  for g in lint lock test leak fuzz audit secrets workflows sbom build; do
+  for g in lint lock test leak fuzz audit secrets workflows sbom build fips; do
     start=$SECONDS
     run_gate "$g" || true
     st="${LAST_STATUS%% *}"
@@ -189,7 +200,8 @@ run_gate() {
     workflows) gate_workflows || rc=$? ;;
     sbom) gate_sbom || rc=$? ;;
     build) gate_build || rc=$? ;;
-    *) echo "unknown gate: $gate (known: lint test lock leak fuzz audit secrets workflows sbom build all report)" >&2; return 2 ;;
+    fips) gate_fips || rc=$? ;;
+    *) echo "unknown gate: $gate (known: lint test lock leak fuzz audit secrets workflows sbom build fips all report)" >&2; return 2 ;;
   esac
   if [ "$rc" -eq "$SKIP_RC" ]; then
     LAST_STATUS="SKIPPED ${SKIP_REASON:-skipped}"
@@ -205,7 +217,7 @@ run_gate() {
   return "$rc"
 }
 
-[ "$#" -ge 1 ] || { echo "usage: scripts/check <gate> [...]  (lint test lock leak fuzz audit secrets workflows sbom build all report)" >&2; exit 2; }
+[ "$#" -ge 1 ] || { echo "usage: scripts/check <gate> [...]  (lint test lock leak fuzz audit secrets workflows sbom build fips all report)" >&2; exit 2; }
 
 failed=0
 for arg in "$@"; do

@@ -240,3 +240,26 @@ def test_add_no_proxy_appends():
     sess.add_no_proxy(env)
     assert env["no_proxy"] == "a.example.invalid,localhost,127.0.0.1,::1"
     assert env["NO_PROXY"] == "127.0.0.1,localhost,::1"
+
+
+def test_fips_require_refuses_launch_when_checks_fail(monkeypatch):
+    from cui_guard.fips import FipsError
+
+    def failing():
+        raise FipsError("os: Darwin is not supported in FIPS mode; Linux only\nkernel-fips: not 1")
+
+    monkeypatch.setattr(sess, "require_fips", failing)
+    _write_user('fips = "require"\n')
+    with pytest.raises(LaunchError, match="FIPS checks failed") as e:
+        prepare_policy(True, FakeChannel("j", True))
+    assert "os:" in str(e.value) and "kernel-fips:" in str(e.value)
+    monkeypatch.setattr(sess, "require_fips", lambda: None)
+    assert prepare_policy(True, FakeChannel("j", True)).fips == "require"
+
+
+def test_fips_off_skips_checks(monkeypatch):
+    def unexpected():
+        raise AssertionError("require_fips called with fips off")
+
+    monkeypatch.setattr(sess, "require_fips", unexpected)
+    assert prepare_policy(True, FakeChannel("j", True)).fips == "off"

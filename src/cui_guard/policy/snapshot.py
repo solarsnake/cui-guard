@@ -13,6 +13,7 @@ from cui_guard.policy.loader import load_builtin_layer, state_dir
 from cui_guard.policy.schema import (
     DEFAULT_AUDIT_PATH,
     EGRESS_MODES,
+    FIPS_MODES,
     AuditConfig,
     Endpoint,
     PolicyError,
@@ -108,6 +109,12 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
         elif old_ep != ep:
             reasons.append(f"endpoint {name} changed (trust {ep.trust.value})")
 
+    # A different trust store decides which servers the endpoint will accept (design 8.2).
+    for name, ep in sorted((cur.endpoints or {}).items()):
+        old_ep = prev_eps.get(name)
+        if ep.ca_file != (old_ep.ca_file if old_ep is not None else None):
+            reasons.append(f"endpoint {name} trust store changed (ca_file)")
+
     for name, ep in sorted((cur.endpoints or {}).items()):
         if _sends_credential(ep.credential) and prev_eps.get(name) != ep:
             reasons.append(
@@ -143,6 +150,10 @@ def loosenings(previous: PolicyLayer | None, current: PolicyLayer | None) -> lis
     if prev.egress_rehydration != "allow" and cur.egress_rehydration == "allow":
         reasons.append("egress_rehydration set to allow")
 
+    # A user "require" is a tightening; dropping an approved one is not.
+    if prev.fips == "require" and cur.fips != "require":
+        reasons.append("fips requirement removed")
+
     prev_path = prev.audit.path if prev.audit else DEFAULT_AUDIT_PATH
     if cur.audit is not None and cur.audit.path != prev_path:
         reasons.append(f"audit log path changed: {prev_path} -> {cur.audit.path}")
@@ -163,6 +174,7 @@ def _to_dict(layer: PolicyLayer) -> dict:
                 "formats": list(e.formats),
                 "trust": e.trust.value,
                 "credential": e.credential,
+                "ca_file": e.ca_file,
             }
             for n, e in layer.endpoints.items()
         }
@@ -188,6 +200,8 @@ def _to_dict(layer: PolicyLayer) -> dict:
         }
     if layer.egress_rehydration is not None:
         d["egress_rehydration"] = layer.egress_rehydration
+    if layer.fips is not None:
+        d["fips"] = layer.fips
     return d
 
 
@@ -233,6 +247,7 @@ def _from_dict(d: dict) -> PolicyLayer:
                 and isinstance(e["url"], str)
                 and isinstance(e["credential"], str)
                 and isinstance(e["trust"], str)
+                and isinstance(e.get("ca_file"), str | None)
             ):
                 raise PolicyError("snapshot: bad endpoint")
             eps[n] = Endpoint(
@@ -241,6 +256,7 @@ def _from_dict(d: dict) -> PolicyLayer:
                 tuple(_strs(e["formats"])),
                 Trust(e["trust"]),
                 e["credential"],
+                e.get("ca_file"),
             )
         layer.endpoints = eps
     if "identifiers" in d:
@@ -279,6 +295,9 @@ def _from_dict(d: dict) -> PolicyLayer:
     if d.get("egress_rehydration") not in (None, *EGRESS_MODES):
         raise PolicyError("snapshot: bad egress_rehydration")
     layer.egress_rehydration = d.get("egress_rehydration")
+    if d.get("fips") not in (None, *FIPS_MODES):
+        raise PolicyError("snapshot: bad fips")
+    layer.fips = d.get("fips")
     return layer
 
 

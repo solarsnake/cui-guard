@@ -322,3 +322,32 @@ def test_egress_rehydration_builtin_is_default_and_round_trips():
         parse_layer({"egress_rehydration": "maybe"}, "user")
     with pytest.raises(PolicyError):
         EffectivePolicy.from_dict({**pol.to_dict(), "egress_rehydration": "off"})
+
+
+def test_fips_and_ca_file_merge_and_round_trip():
+    assert (merged().fips, merged().provenance["fips"]) == ("off", "builtin")
+    pol = merged(user={"fips": "off"}, org={"fips": "require"})
+    assert (pol.fips, pol.provenance["fips"]) == ("require", "org")
+    assert merged(user={"fips": "require"}).provenance["fips"] == "user"
+    ca = "/etc/pki/corp-roots.crt"
+    pol = merged(
+        user={"endpoints": {"anthropic": {
+            "url": "https://api.anthropic.com", "formats": ["anthropic"],
+            "credential": "env-or-passthrough:ANTHROPIC_API_KEY", "ca_file": ca,
+        }}},
+        org={"fips": "require"},
+    )  # fmt: skip
+    assert pol.endpoints["anthropic"].ca_file == ca
+    again = EffectivePolicy.from_dict(json.loads(json.dumps(pol.to_dict())))
+    assert again.fips == "require" and again.endpoints == pol.endpoints
+    with pytest.raises(PolicyError):
+        EffectivePolicy.from_dict({**pol.to_dict(), "fips": "maybe"})
+
+
+def test_downgraded_endpoint_keeps_ca_file():
+    pol = merged(user={"endpoints": {"fake": {
+        "url": "https://not-local.example.invalid", "formats": ["anthropic"],
+        "trust": "local", "ca_file": "/etc/pki/corp-roots.crt",
+    }}})  # fmt: skip
+    assert pol.endpoints["fake"].trust is Trust.PUBLIC
+    assert pol.endpoints["fake"].ca_file == "/etc/pki/corp-roots.crt"

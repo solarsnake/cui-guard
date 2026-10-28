@@ -115,3 +115,17 @@ def test_cleartext_remote_endpoint_rejected(url):
 )
 def test_loopback_or_tls_endpoint_accepted(url):
     parse_layer(_endpoint_layer(url), "user")
+
+
+def test_fips_and_ca_file_keys_validated():
+    assert parse_layer({"fips": "require"}, "user").fips == "require"
+    assert load_builtin_layer().fips == "off"
+    with pytest.raises(PolicyError, match="fips"):
+        parse_layer({"fips": True}, "user")
+    ep = {"url": "https://x.example.invalid", "formats": ["anthropic"]}
+    assert parse_layer({"endpoints": {"x": ep}}, "user").endpoints["x"].ca_file is None
+    with_ca = parse_layer({"endpoints": {"x": {**ep, "ca_file": "/etc/x.crt"}}}, "org")
+    assert with_ca.endpoints["x"].ca_file == "/etc/x.crt"
+    for bad in ("", 5):
+        with pytest.raises(PolicyError, match="ca_file"):
+            parse_layer({"endpoints": {"x": {**ep, "ca_file": bad}}}, "user")
