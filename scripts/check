@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Single entry point for the project's gates: scripts/check <gate> [...]
-# Gates: lint, test, lock, leak, fuzz, audit, secrets, workflows, all. Add a gate by appending a case branch.
+# Gates: lint, test, lock, leak, fuzz, audit, secrets, workflows, sbom, build, all. Add a gate by appending a case branch.
 set -euo pipefail
 
 export UV_PYTHON_DOWNLOADS=never
@@ -94,6 +94,46 @@ gate_workflows() {
   (cd "$ROOT" && "$(tool zizmor)" --config .github/zizmor.yml .github/workflows)
 }
 
+# SBOM of the runtime lock, checked against the minimum elements. Written to build/sbom/
+# because the wheel embeds that exact path (pyproject sbom-files).
+gate_sbom() {
+  local py
+  py="$(tool python)"
+  (cd "$ROOT" && "$py" scripts/security/sbom.py build --out build/sbom/cui-guard.cdx.json &&
+    "$py" scripts/security/sbom.py check build/sbom/cui-guard.cdx.json)
+}
+
+# Build the SBOM, then the sdist and wheel twice into fresh directories with a fixed
+# SOURCE_DATE_EPOCH (HEAD commit time); every artifact must have an identical SHA-256.
+gate_build() {
+  local uv py epoch f rc=0
+  uv="$(tool uv)"
+  py="$(tool python)"
+  epoch="$(git -C "$ROOT" log -1 --format=%ct)" || return 1
+  export SOURCE_DATE_EPOCH="$epoch"
+  gate_sbom >/dev/null || return 1
+  rm -rf "$ROOT/build/dist-a" "$ROOT/build/dist-b"
+  # The wheel is built from the source tree, not from the sdist: the SBOM is gitignored,
+  # so the sdist (and a wheel built from it) would not carry it.
+  (cd "$ROOT" && for d in a b; do
+    "$uv" build --sdist --out-dir "build/dist-$d" && "$uv" build --wheel --out-dir "build/dist-$d"
+  done) >/dev/null || return 1
+  [ -n "$(ls "$ROOT/build/dist-a")" ] || { echo "no artifacts built" >&2; return 1; }
+  [ "$(ls "$ROOT/build/dist-a")" = "$(ls "$ROOT/build/dist-b")" ] || { echo "artifact names differ" >&2; return 1; }
+  for f in $(ls "$ROOT/build/dist-a"); do
+    local a b
+    a="$("$py" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ROOT/build/dist-a/$f")"
+    b="$("$py" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ROOT/build/dist-b/$f")"
+    if [ "$a" = "$b" ]; then
+      echo "$a  $f"
+    else
+      echo "DIFFERENT $f: $a != $b" >&2
+      rc=1
+    fi
+  done
+  return "$rc"
+}
+
 run_gate() {
   local gate="$1" rc=0
   case "$gate" in
@@ -105,7 +145,9 @@ run_gate() {
     audit) gate_audit || rc=$? ;;
     secrets) gate_secrets || rc=$? ;;
     workflows) gate_workflows || rc=$? ;;
-    *) echo "unknown gate: $gate (known: lint test lock leak fuzz audit secrets workflows all)" >&2; return 2 ;;
+    sbom) gate_sbom || rc=$? ;;
+    build) gate_build || rc=$? ;;
+    *) echo "unknown gate: $gate (known: lint test lock leak fuzz audit secrets workflows sbom build all)" >&2; return 2 ;;
   esac
   if [ "$rc" -eq "$SKIP_RC" ]; then
     echo "== $gate: SKIPPED (${SKIP_REASON:-skipped})"
@@ -118,12 +160,12 @@ run_gate() {
   return "$rc"
 }
 
-[ "$#" -ge 1 ] || { echo "usage: scripts/check <gate> [...]  (lint test lock leak fuzz audit secrets workflows all)" >&2; exit 2; }
+[ "$#" -ge 1 ] || { echo "usage: scripts/check <gate> [...]  (lint test lock leak fuzz audit secrets workflows sbom build all)" >&2; exit 2; }
 
 failed=0
 for arg in "$@"; do
   if [ "$arg" = "all" ]; then
-    for g in lint test lock audit secrets workflows; do
+    for g in lint test lock audit secrets workflows sbom build; do
       run_gate "$g" || failed=1
     done
   else
