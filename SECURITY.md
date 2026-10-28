@@ -16,7 +16,9 @@ Please include the version, what you did, what you expected and what happened. U
 Only the latest minor release of cui-guard receives security fixes.
 
 Supported Python versions are the CPython versions under upstream security support. `cui-guard doctor` (planned, not yet shipped) warns when the running interpreter is past end of life.
-<!-- TODO: drop "planned, not yet shipped" when `doctor` lands; the FIPS/doctor task's test should check this line. --> Vulnerabilities in the interpreter or OpenSSL are outside what the dependency audit can see, so keep your interpreter current.
+<!-- TODO: drop "planned, not yet shipped" when `doctor` lands; the FIPS/doctor task's test should check this line. -->
+
+Vulnerabilities in the interpreter or OpenSSL are outside what the dependency audit can see, so keep your interpreter current.
 
 ## Response targets
 

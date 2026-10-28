@@ -42,7 +42,7 @@ def test_security_md_sections():
 def test_no_compliance_claims():
     banned = re.compile(
         r"\b(FedRAMP|CMMC|ATO)\b[^.\n]*\b(compliant|certified|authorized|approved)\b"
-        r"|\bSLSA (Level|L)\s*3\b|\bcompliant\b",
+        r"|\bSLSA (Build )?(Level|L)\s*[34]\b|\bcompliant\b",
         re.IGNORECASE,
     )
     for p in [ROOT / "SECURITY.md", *(ROOT / "docs").glob("*.md"), ROOT / "README.md"]:

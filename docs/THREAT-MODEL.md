@@ -58,7 +58,7 @@ An agent that is tricked into loosening policy, reading the token, or bypassing 
 
 Controls: loosening the policy needs OS authentication raised by the gateway; the launcher adds deny rules for the config and state directories; the token is passed through the environment only and never written to disk; state files are mode 0600 and directories 0700.
 
-Tests: `tests/pentest/test_http_surface.py`, `tests/leak/test_tamper.py`.
+Tests: `tests/pentest/test_http_surface.py`, `tests/leak/test_tamper.py`, `tests/launch/test_claude.py` (pins the deny rules).
 
 Residual risk: Claude deny rules cover file-editing tools, not the shell; in passthrough mode the agent can reach the provider by a route that skips the gateway. See "Approvals, overrides and the local user" and "Credentials and the agent" in [LIMITS.md](LIMITS.md).
 
@@ -96,4 +96,4 @@ Controls:
 
 Tests: `tests/security/test_workflows.py`.
 
-Residual risk: repository-side controls (2FA, rulesets, required reviewers) depend on the maintainer applying [MAINTAINER-SECURITY.md](MAINTAINER-SECURITY.md). A reusable-workflow build for SLSA Build Level 3 is deferred.
+Residual risk: repository-side controls (2FA, rulesets, required reviewers) depend on the maintainer applying [MAINTAINER-SECURITY.md](MAINTAINER-SECURITY.md). A reusable-workflow build for a higher SLSA build level is deferred.
