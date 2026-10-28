@@ -59,7 +59,7 @@ cui-guard doctor --require-fips
 
 ## Trust store for internal endpoints
 
-An endpoint can set `ca_file`, a path to a PEM bundle that replaces the default trust store for that endpoint. This is how an internal model server with a DoD PKI or other internal certificate is trusted. `ca_file` replaces the store in FIPS mode and outside it. Without `ca_file`, FIPS mode uses the default store of the interpreter's OpenSSL, which the platform manages (on RHEL, the system trust store, where DoD roots added with `update-ca-trust` also land). Outside FIPS mode the default is certifi's public bundle, as httpx uses.
+An endpoint can set `ca_file`, an absolute path to a PEM bundle that replaces the default trust store for that endpoint. This is how an internal model server with a DoD PKI or other internal certificate is trusted. `ca_file` replaces the store in FIPS mode and outside it. Without `ca_file`, FIPS mode uses the compiled-in default store of the interpreter's OpenSSL, which the platform manages (on RHEL, the system trust store, where DoD roots added with `update-ca-trust` also land). Outside FIPS mode the default is certifi's public bundle. Both modes ignore `SSL_CERT_FILE` and `SSL_CERT_DIR`; put a corporate or TLS-inspection CA in `ca_file`.
 
 ```
 [endpoints.internal]
@@ -69,7 +69,7 @@ trust = "approved"
 ca_file = "/etc/pki/cui-guard/dod-roots.crt"
 ```
 
-The gateway refuses a `ca_file` that is group- or world-writable, or owned by neither the current user nor root. Adding or changing `ca_file` in the user layer is a loosening and needs OS authentication.
+The gateway refuses a `ca_file` that is a relative path, group- or world-writable, or owned by neither the current user nor root. It opens the file once and checks that opened file, following symlinks to the target. Adding or changing `ca_file` in the user layer is a loosening and needs OS authentication. Approval covers the path, not the file's contents, so keep organization bundles root-owned.
 
 ## Certificates belong to the platform vendor
 
