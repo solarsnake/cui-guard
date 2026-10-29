@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import string
 from dataclasses import dataclass
 
 from cui_guard.detect.normalize import normalize
@@ -13,11 +14,31 @@ BUILTIN_DOMAINS = ("mil", "gov")
 BUILTIN_IP_RANGES = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 
 _LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
-_EMAIL = re.compile(
-    r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}"
-)
+# An email is a run of _EMAIL_LOCAL characters, then _EMAIL_AT_DOMAIN. `_emails` finds them
+# from each '@' rather than with one regex: `[...]+@` restarted at every character of a long
+# run with no '@', which was quadratic.
+_EMAIL_LOCAL = frozenset(string.ascii_letters + string.digits + "._%+-")
+_EMAIL_AT_DOMAIN = re.compile(r"@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")
 _JIRA = re.compile(r"(?<![A-Za-z0-9])([A-Z][A-Z0-9]{1,9})-\d+(?![A-Za-z0-9])")
+
+
+def _emails(norm: str):
+    """(start, end) of each email, as `[A-Za-z0-9._%+-]+@<domain>` finditer would report them.
+
+    The scan back from each '@' stops at the previous match's end or a non-local character
+    ('@' is one), so no character is scanned twice.
+    """
+    pos = 0
+    at = norm.find("@")
+    while at >= 0:
+        start = at
+        while start > pos and norm[start - 1] in _EMAIL_LOCAL:
+            start -= 1
+        if start < at and (m := _EMAIL_AT_DOMAIN.match(norm, at)):
+            yield start, m.end()
+            pos = m.end()
+        at = norm.find("@", max(at + 1, pos))
 
 
 @dataclass(frozen=True)
@@ -53,9 +74,10 @@ def identifier_hits(text: str, cfg: IdentifierConfig) -> list[Hit]:
     norm, index_map = normalize(text)
     hits: list[Hit] = []
 
-    def add(kind: str, m: re.Match[str]) -> None:
-        start = index_map[m.start()]
-        end = index_map[m.end() - 1] + 1
+    def add(kind: str, m: re.Match[str] | tuple[int, int]) -> None:
+        lo, hi = (m.start(), m.end()) if isinstance(m, re.Match) else m
+        start = index_map[lo]
+        end = index_map[hi - 1] + 1
         hits.append(
             Hit(
                 rule_id=f"id.{kind}",
@@ -87,8 +109,8 @@ def identifier_hits(text: str, cfg: IdentifierConfig) -> list[Hit]:
         if any(addr in n for n in networks if n.version == 4):
             add("ip", m)
 
-    for m in _EMAIL.finditer(norm):
-        add("email", m)
+    for span in _emails(norm):
+        add("email", span)
 
     any_key = bool(host_pat and host_pat.search(norm))
     projects = set(cfg.jira_projects)

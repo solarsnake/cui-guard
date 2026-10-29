@@ -22,9 +22,11 @@ _NESSUS_FIELDS = (
 _NESSUS_XML = re.compile(r"<ReportHost\b")
 
 _NMAP_REPORT = re.compile(r"Nmap scan report for\b")
-_NMAP_HEADER = re.compile(r"^\s*PORT\s+STATE\s+SERVICE\b", re.MULTILINE)
+# Leading space is matched within one line (`[^\S\n]`): `^\s*` ran across blank lines from every
+# line start, which was quadratic on a run of empty lines.
+_NMAP_HEADER = re.compile(r"^[^\S\n]*PORT\s+STATE\s+SERVICE\b", re.MULTILINE)
 _NMAP_ROW = re.compile(
-    r"^\s*\d{1,5}/(?:tcp|udp)\s+(?:open|closed|filtered)\S*\s+\S+", re.MULTILINE
+    r"^[^\S\n]*\d{1,5}/(?:tcp|udp)\s+(?:open|closed|filtered)\S*\s+\S+", re.MULTILINE
 )
 
 _STIG_STRONG = re.compile(r"<CHECKLIST>|<VULN>|\bxccdf:\w|\bSV-\d+r\d+_rule\b")

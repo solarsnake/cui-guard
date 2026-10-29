@@ -4,7 +4,7 @@
 [[rule]]
 id = "cui-banner"
 class = "cui-marking"
-regex = '''^[ \t]*((?i:(CUI|CONTROLLED)//[A-Z0-9 ,/\-]+)|(CUI|CONTROLLED))[ \t]*\r?$'''
+regex = '''^[ \t]*((?i:(CUI|CONTROLLED)//[A-Z0-9 ,/\-]++)|(CUI|CONTROLLED))[ \t]*\r?$'''
 flags = ["MULTILINE"]
 verified = true
 source = "https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-32.xml?part=2002"
