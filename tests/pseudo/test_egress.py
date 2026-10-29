@@ -302,11 +302,20 @@ def _median_ms(fn) -> float:
 
 def test_long_runs_decide_in_linear_time():
     smap, e, _ = _guarded()
+
+    def text(unit: str, n: int) -> str:
+        out = (unit * n)[: n - len(e) - 1] + " " + e
+        assert len(out) == n
+        return out
+
     for unit in ("A", "a.b.c.", "aA1+.-", "A:", "@[", "http:a"):  # was O(n^2): 'A' * 50k took 11 s
-        text = (unit * 100_000)[: 100_000 - len(e) - 1] + " " + e
-        assert len(text) == 100_000
-        ms = _median_ms(lambda t=text: smap.tool_outbound(t))
-        assert ms < 50, (unit, ms)
+        small, large = text(unit, 50_000), text(unit, 100_000)
+        ratios = []
+        for _ in range(2):  # one re-measure, so a single scheduler stall cannot fail it
+            t_small = _median_ms(lambda t=small: smap.tool_outbound(t))
+            t_large = _median_ms(lambda t=large: smap.tool_outbound(t))
+            ratios.append(t_large / max(t_small, 1e-6))
+        assert min(ratios) < 3, (unit, ratios)
 
 
 def test_oversized_call_is_outbound_without_parsing():

@@ -94,11 +94,13 @@ def _timed(text, cfg):
     return time.perf_counter() - start
 
 
+@pytest.mark.perf
 def test_cve_scan_perf_no_hosts():
     text = "\n".join(f"CVE-2099-{10000 + i} noted" for i in range(20000))
     assert _timed(text, IdentifierConfig()) < 0.05
 
 
+@pytest.mark.perf
 def test_cve_scan_perf_one_host():
     lines = [f"CVE-2099-{10000 + i} noted" for i in range(20000)]
     lines[10] = "host a.example.mil"

@@ -148,6 +148,7 @@ def test_unknown_kind_rejected():
         SessionMap().placeholder_for("x", "bogus")
 
 
+@pytest.mark.perf
 def test_perf_large_map():
     import time
 

@@ -5,6 +5,8 @@ import sys
 import threading
 import types
 
+import pytest
+
 from cui_guard.detect import engine
 from cui_guard.detect.engine import Detector
 from cui_guard.detect.identifiers import IdentifierConfig
@@ -227,6 +229,7 @@ def test_presidio_model_absent_builds_nothing(monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", real)
 
 
+@pytest.mark.perf
 def test_overlap_resolution_linear_without_overlaps():
     import time
 

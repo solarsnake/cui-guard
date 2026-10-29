@@ -9,7 +9,9 @@ JUSTIFICATION = "reviewed by me: synthetic test string, not CUI"
 CLASSIFIED = "TOP SECRET//SI//TK//NOFORN"
 
 
-async def until(pred, timeout=3.0):
+# A condition wait: it returns as soon as `pred` holds. The deadline only stops a hang, so it
+# is generous enough for a loaded CI runner and never decides a passing run.
+async def until(pred, timeout=30.0):
     loop = asyncio.get_running_loop()
     end = loop.time() + timeout
     while loop.time() < end:

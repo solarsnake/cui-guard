@@ -38,7 +38,10 @@ artifacts = ["build/sbom/cui-guard.cdx.json"]
 exclude-newer = "7 days"
 
 [tool.pytest.ini_options]
-markers = ["network: needs the package index (uv lock)"]
+markers = [
+    "network: needs the package index (uv lock)",
+    "perf: absolute latency budget; run by the perf gate (scripts/check perf), not the test gate",
+]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 

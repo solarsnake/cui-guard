@@ -2,6 +2,8 @@ import dataclasses
 import statistics
 import time
 
+import pytest
+
 from cui_guard.detect.engine import Detector
 from cui_guard.detect.identifiers import IdentifierConfig
 from cui_guard.detect.rules import load_builtin_rules
@@ -158,6 +160,7 @@ def test_excerpt_masks_match():
     assert "\n" not in b.excerpt
 
 
+@pytest.mark.perf
 def test_cached_history_latency_budget():
     pipe, _ = make()
     chunk = (
