@@ -5,9 +5,9 @@ freezes the gateway's event loop; the pipeline timeout cannot fire. Each
 target runs over hostile fillers at n and 2n characters (n about 20k) and
 the growth ratio time(2n) / time(n), median of 3, must stay below 3.
 
-A pair whose 2n run takes under NOISE_FLOOR seconds is accepted without a
-ratio: a super-linear rule at 40k characters costs far more than that, and
-below it the ratio only measures timer noise.
+A pair whose 2n run takes under NOISE_FLOOR (20 ms) is accepted without a
+ratio: every super-linear case this sweep found cost 0.25 s to several seconds
+at 40k characters, and below the floor the ratio only measures timer noise.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from cui_guard.detect.rules import load_builtin_rules
 
 N = 20_000
 MAX_RATIO = 3.0
-NOISE_FLOOR = 0.002
+NOISE_FLOOR = 0.020
 
 RULES = load_builtin_rules()
 CFG = IdentifierConfig(
