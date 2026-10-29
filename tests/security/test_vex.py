@@ -90,16 +90,16 @@ def test_missing_justification_flagged():
     assert "justification" in " ".join(found)
 
 
-def test_gitleaks_config_allowlists_only_test_paths():
+def test_gitleaks_config_allowlists_only_named_files():
     cfg = tomllib.loads((ROOT / ".gitleaks.toml").read_text())
-    paths = cfg["allowlist"]["paths"]
-    assert paths
-    assert all(
-        p.lstrip("^").startswith(
-            ("tests/", "src/cui_guard/detect/rules/credential_patterns")
-        )
-        for p in paths
-    )
+    assert "allowlist" not in cfg  # the legacy single-table form
+    paths = [p for entry in cfg["allowlists"] for p in entry.get("paths", [])]
+    assert paths == [r"^src/cui_guard/detect/rules/credential_patterns\.toml$"]
+    for entry in cfg["allowlists"]:
+        assert set(entry) <= {"description", "paths"}  # no regex or stopword exemptions
+    for p in paths:  # each entry is one exact, existing file, never a directory
+        assert p.startswith("^") and p.endswith("$")
+        assert (ROOT / p[1:-1].replace("\\.", ".")).is_file(), p
 
 
 def test_zizmor_requires_hash_pins():

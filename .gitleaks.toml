@@ -1,12 +1,13 @@
-# Default gitleaks rules plus an allowlist for synthetic test material only.
+# Default gitleaks rules. The only exemption is the detector's own rule file, which holds
+# credential regexes, not credentials. Tests need none: secret-shaped test values are assembled
+# at runtime. A new exemption names one exact file; never a directory.
 title = "cui-guard gitleaks config"
 
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Synthetic test data and the detector's own rule file"
+[[allowlists]]
+description = "The detector's credential rule file (regexes, not credentials)"
 paths = [
-  '''^tests/''',
-  '''^src/cui_guard/detect/rules/credential_patterns''',
+  '''^src/cui_guard/detect/rules/credential_patterns\.toml$''',
 ]
