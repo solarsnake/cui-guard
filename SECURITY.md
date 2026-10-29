@@ -4,10 +4,10 @@ cui-guard sits on the path of every prompt an agent sends, so a flaw in it can l
 
 ## Reporting
 
-Report vulnerabilities privately. Do not open a public issue.
+Report vulnerabilities privately. Never put vulnerability details in a public issue.
 
 - Use GitHub's "Report a vulnerability" button on the repository's Security tab (private vulnerability reporting).
-- If that is not available to you, write to `<maintainer contact — fill in before publishing>`.
+- If you cannot use private reporting, open a public issue that says only that you need a private channel to report a security problem, with no details.
 
 Please include the version, what you did, what you expected and what happened. Use synthetic data only. Never send real controlled data, real credentials or real personal data in a report.
 

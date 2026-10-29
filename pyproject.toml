@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cui-guard"
 version = "0.1.0"
-description = "Local gateway that keeps controlled data off public LLMs."
+description = "Local gateway that keeps CUI and other controlled data out of public AI models: it masks, blocks or routes sensitive content between coding agents and the model API, with audited overrides."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"

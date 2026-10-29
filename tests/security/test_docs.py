@@ -35,7 +35,7 @@ def test_security_md_sections():
     ):
         assert needed in headings, needed
     assert "Report a vulnerability" in text
-    assert "<maintainer contact — fill in before publishing>" in text
+    assert "private vulnerability reporting" in text and "fill in before publishing" not in text
     assert "`cui-guard doctor` reports `end-of-life`" in text and "end of life" in text
     assert "planned, not yet shipped" not in text and "TODO" not in text
 

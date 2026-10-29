@@ -135,4 +135,4 @@ def test_every_release_asset_is_a_provenance_subject():
     for asset in re.findall(r"files/\S+", create):
         assert asset in subjects or asset == "files/build/sbom/*", asset
     assurance = (ROOT / "docs" / "SECURITY-ASSURANCE.md").read_text()
-    assert "gh attestation verify runtime.lock.txt --repo <owner>/cui-guard" in assurance
+    assert "gh attestation verify runtime.lock.txt --repo solarsnake/cui-guard" in assurance

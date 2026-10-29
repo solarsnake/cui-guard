@@ -18,21 +18,21 @@ Download the release assets, then:
 
 ```
 # Build provenance attestation (needs the GitHub CLI)
-gh attestation verify cui_guard-<version>-py3-none-any.whl --repo <owner>/cui-guard
+gh attestation verify cui_guard-<version>-py3-none-any.whl --repo solarsnake/cui-guard
 
 # SBOM attestation (binds the SBOM to the wheel; a different predicate type)
-gh attestation verify cui_guard-<version>-py3-none-any.whl --repo <owner>/cui-guard --predicate-type https://cyclonedx.org/bom
+gh attestation verify cui_guard-<version>-py3-none-any.whl --repo solarsnake/cui-guard --predicate-type https://cyclonedx.org/bom
 
 # PyPI attestation: the project page shows the provenance for each file. To check it from
 # the command line, query the PyPI integrity API and compare the file's digest
 curl -s https://pypi.org/integrity/cui-guard/<version>/cui_guard-<version>-py3-none-any.whl/provenance
 
 # Verify the runtime hash lock before trusting its hashes: it is the root of the install
-gh attestation verify runtime.lock.txt --repo <owner>/cui-guard
+gh attestation verify runtime.lock.txt --repo solarsnake/cui-guard
 
 # The VEX and the security report are provenance subjects too
-gh attestation verify vex.cdx.json --repo <owner>/cui-guard
-gh attestation verify report.json --repo <owner>/cui-guard
+gh attestation verify vex.cdx.json --repo solarsnake/cui-guard
+gh attestation verify report.json --repo solarsnake/cui-guard
 
 # Install exactly the locked runtime set, with hashes enforced
 pip install --require-hashes -r runtime.lock.txt

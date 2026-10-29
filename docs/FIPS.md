@@ -40,7 +40,7 @@ Python from python.org, Homebrew, pyenv or uv's standalone builds carries its ow
 Install from the hash lock with the distribution's Python, so no unpinned package is fetched:
 
 ```
-gh attestation verify runtime.lock.txt --repo <owner>/cui-guard
+gh attestation verify runtime.lock.txt --repo solarsnake/cui-guard
 python3.12 -m venv /opt/cui-guard
 /opt/cui-guard/bin/pip install --require-hashes -r runtime.lock.txt
 /opt/cui-guard/bin/pip install --no-deps cui_guard-<version>-py3-none-any.whl
