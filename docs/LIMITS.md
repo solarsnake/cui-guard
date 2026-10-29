@@ -90,7 +90,7 @@ The red-team corpus (`tests/redteam`) sends obfuscated canaries through the gate
 
 ## Availability and robustness
 
-- **A pathological user regex can stall a session.** Python's regex engine cannot be interrupted. A catastrophic (ReDoS-prone) pattern in your own config makes scans time out. The request then fails closed (nothing is forwarded), but a worker thread stays busy, and repeated runaway scans can exhaust the worker pool. One gateway serves one session, so other sessions are not affected.
+- **A pathological user regex can stall a session.** Python's regex engine cannot be interrupted. A catastrophic (ReDoS-prone) pattern in your own config holds the interpreter lock for the whole match, so the scan timeout cannot fire and the entire gateway stalls until the match ends: every request in the session waits, and nothing is forwarded meanwhile. The built-in rules are tested to stay linear (`tests/detect/test_redos.py`); your own patterns are not. One gateway serves one session, so other sessions are not affected.
 - **Requests over 32 MiB are refused.** The gateway answers 413 and does not contact the upstream.
 - **A hung upstream times out after 10 minutes of silence.** The upstream read timeout is 600 seconds of inactivity, not a total limit: a response that keeps sending data is never cut off, but an upstream that sends nothing for 10 minutes fails the request.
 - **Cross-origin and DNS-rebinding requests are refused.** A request with an `Origin` header, a cross-site `Sec-Fetch-Site`, or a `Host` that is not this gateway's loopback address and port gets 403. A top-level browser navigation is stopped by the session token, not by this guard.

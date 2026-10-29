@@ -5,9 +5,10 @@ freezes the gateway's event loop; the pipeline timeout cannot fire. Each
 target runs over hostile fillers at n and 2n characters (n about 20k) and
 the growth ratio time(2n) / time(n), median of 3, must stay below 3.
 
-A pair whose 2n run takes under NOISE_FLOOR (20 ms) is accepted without a
-ratio: every super-linear case this sweep found cost 0.25 s to several seconds
-at 40k characters, and below the floor the ratio only measures timer noise.
+Below NOISE_FLOOR (20 ms) the ratio only measures timer noise, so a cheap
+target is re-tried at 4n characters until its 2n run clears the floor; only a
+target still under the floor at 160k characters is accepted unmeasured (a
+quadratic rule cannot stay that fast at that size).
 """
 
 from __future__ import annotations
@@ -21,6 +22,9 @@ import pytest
 from cui_guard.detect.heuristics import controlled_content_hits
 from cui_guard.detect.identifiers import IdentifierConfig, identifier_hits
 from cui_guard.detect.rules import load_builtin_rules
+
+# Timing-based: runs in the single `perf` job, not on the shared CI matrix.
+pytestmark = pytest.mark.perf
 
 N = 20_000
 MAX_RATIO = 3.0
@@ -190,9 +194,12 @@ def _median_time(fn, text: str) -> float:
 def test_target_is_linear_on_adversarial_input(name, fn, builders):
     slow = []
     for label, _ in builders:
-        small, large = _text(label, N), _text(label, 2 * N)
-        # One screening run: noise only makes a run slower, never hides a slow rule.
-        if _time(fn, large) < NOISE_FLOOR:
+        # Grow n until the 2n run clears the noise floor (noise only slows a run).
+        for n in (N, 4 * N):
+            small, large = _text(label, n), _text(label, 2 * n)
+            if _time(fn, large) >= NOISE_FLOOR:
+                break
+        else:
             continue
         t_small, t_large = _median_time(fn, small), _median_time(fn, large)
         ratio = t_large / max(t_small, 1e-9)

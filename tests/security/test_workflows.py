@@ -101,7 +101,7 @@ def test_ci_matrix_runs_no_perf_tests():
     assert "test" in gates.split() and "perf" not in gates.split()
     check = (ROOT / "scripts" / "check").read_text()
     assert 'gate_test() { (cd "$ROOT" && "$(tool pytest)" -q -m "not perf"' in check
-    assert 'gate_perf() { (cd "$ROOT" && "$(tool pytest)" -q -m perf); }' in check
+    assert 'gate_perf() { (cd "$ROOT" && "$(tool pytest)" -q -m perf $(junit perf)); }' in check
     assert "for g in lint test perf lock audit secrets workflows sbom build; do" in check
 
 

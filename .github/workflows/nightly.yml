@@ -6,6 +6,10 @@ on:
 
 permissions: {}
 
+# A SKIPPED gate fails every job (a skip is never silent in CI).
+env:
+  CUI_GUARD_STRICT: "1"
+
 jobs:
   checks:
     runs-on: ubuntu-latest

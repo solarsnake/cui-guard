@@ -28,7 +28,7 @@ gate_lint() { (cd "$ROOT" && "$(tool ruff)" check .); }
 # REPORT_RAW (set by the report gate) is the dir that collects machine output; unset, nothing is written.
 junit() { if [ -n "${REPORT_RAW:-}" ]; then printf '%s\n' "--junitxml=$REPORT_RAW/$1.xml"; fi; }
 gate_test() { (cd "$ROOT" && "$(tool pytest)" -q -m "not perf" $(junit test)); }
-gate_perf() { (cd "$ROOT" && "$(tool pytest)" -q -m perf); }
+gate_perf() { (cd "$ROOT" && "$(tool pytest)" -q -m perf $(junit perf)); }
 gate_leak() { (cd "$ROOT" && "$(tool pytest)" -q $(junit leak) tests/leak tests/pentest tests/redteam); }
 # HYPOTHESIS_PROFILE (ci or nightly) passes through to the fuzz properties; default ci.
 gate_fuzz() { (cd "$ROOT" && HYPOTHESIS_PROFILE="${HYPOTHESIS_PROFILE:-ci}" "$(tool pytest)" -q $(junit fuzz) tests/fuzz); }
@@ -183,7 +183,7 @@ gate_report() {
     echo "ruff $("$(tool ruff)" --version | cut -d' ' -f2)"
     echo "pytest $("$(tool pytest)" --version 2>&1 | cut -d' ' -f2)"
   } >"$REPORT_RAW/tools.txt"
-  for g in lint lock test leak fuzz audit secrets workflows sbom build fips; do
+  for g in lint lock test perf leak fuzz audit secrets workflows sbom build fips; do
     start=$SECONDS
     run_gate "$g" || true
     st="${LAST_STATUS%% *}"
@@ -196,6 +196,7 @@ gate_report() {
 
 run_gate() {
   local gate="$1" rc=0
+  SKIP_REASON=""
   case "$gate" in
     lint) gate_lint || rc=$? ;;
     test) gate_test || rc=$? ;;
@@ -211,13 +212,19 @@ run_gate() {
     fips) gate_fips || rc=$? ;;
     *) echo "unknown gate: $gate (known: lint test perf lock leak fuzz audit secrets workflows sbom build fips all report)" >&2; return 2 ;;
   esac
-  if [ "$rc" -eq "$SKIP_RC" ] && [ "${CUI_GUARD_STRICT:-}" = "1" ]; then
+  # Exit 3 is a skip only when the gate said why; pytest also exits 3 on an
+  # internal error, and that must never read as a skip.
+  if [ "$rc" -eq "$SKIP_RC" ] && [ -z "$SKIP_REASON" ]; then
     LAST_STATUS="FAIL"
-    echo "== $gate: FAIL (skipped in strict mode: ${SKIP_REASON:-skipped})"
+    echo "== $gate: FAIL (exit $rc without a skip reason)"
+    return 1
+  elif [ "$rc" -eq "$SKIP_RC" ] && [ "${CUI_GUARD_STRICT:-}" = "1" ]; then
+    LAST_STATUS="FAIL"
+    echo "== $gate: FAIL (skipped in strict mode: ${SKIP_REASON})"
     return 1
   elif [ "$rc" -eq "$SKIP_RC" ]; then
-    LAST_STATUS="SKIPPED ${SKIP_REASON:-skipped}"
-    echo "== $gate: SKIPPED (${SKIP_REASON:-skipped})"
+    LAST_STATUS="SKIPPED ${SKIP_REASON}"
+    echo "== $gate: SKIPPED (${SKIP_REASON})"
     return 0
   elif [ "$rc" -eq 0 ]; then
     LAST_STATUS="PASS"

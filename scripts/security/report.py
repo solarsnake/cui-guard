@@ -27,8 +27,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-GATES = ["lint", "lock", "test", "leak", "fuzz", "audit", "secrets", "workflows", "sbom", "build", "fips"]  # fmt: skip
-PYTEST_GATES = ("test", "leak", "fuzz")
+GATES = ["lint", "lock", "test", "perf", "leak", "fuzz", "audit", "secrets", "workflows", "sbom", "build", "fips"]  # fmt: skip
+PYTEST_GATES = ("test", "perf", "leak", "fuzz")
 STATUSES = {"PASS", "FAIL", "SKIPPED"}
 HEX64 = re.compile(r"[0-9a-f]{64}")
 SAFE_NAME = re.compile(r"[A-Za-z0-9._+-]{1,200}")
