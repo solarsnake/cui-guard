@@ -1,6 +1,6 @@
 # FIPS mode deployment guide
 
-FIPS 140-3 validates cryptographic modules, not applications. cui-guard is not a cryptographic module and is not validated. In FIPS mode it uses the platform's FIPS 140-3 validated module, and it refuses to start unless that module is the one in use.
+FIPS 140-3 validates cryptographic modules, not applications. cui-guard is not a cryptographic module and is not validated. In FIPS mode it uses the platform's FIPS 140-3 validated module, and it refuses to start unless the platform reports its FIPS provider as active. The checks show the provider is active, not that a certificate covers the installed build, so cite the platform vendor's CMVP certificate.
 
 ## What FIPS mode is
 

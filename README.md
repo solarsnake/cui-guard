@@ -68,7 +68,7 @@ There is no project-level layer. The user config can be edited by the agent, so 
 
 Every upstream connection uses TLS 1.2 or later with certificate verification. A lane can set `ca_file`, an absolute path to a PEM bundle that replaces the default trust store for that lane (for example DoD PKI roots for an internal model server); a user-layer `ca_file` is a loosening and needs OS authentication.
 
-`fips = "require"` (default `off`; the strictest layer wins) makes the launcher and gateway refuse to start unless the platform's FIPS 140-3 validated module is in use. It is Linux-only. Check a machine with `cui-guard doctor` (add `--require-fips` to exit 1 when a check fails). See [docs/FIPS.md](docs/FIPS.md).
+`fips = "require"` (default `off`; the strictest layer wins) makes the launcher and gateway refuse to start unless the platform reports its FIPS provider as active (cite the platform vendor's CMVP certificate for the installed build). It is Linux-only. Check a machine with `cui-guard doctor` (add `--require-fips` to exit 1 when a check fails). See [docs/FIPS.md](docs/FIPS.md).
 
 ## Overrides
 

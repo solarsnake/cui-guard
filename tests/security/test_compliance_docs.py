@@ -6,14 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 COMPLIANCE = ROOT / "docs" / "compliance"
 DISCLAIMER = "It does not certify, assess or authorize anything."
-ROOT_FILES = {
-    "uv.lock",
-    "DEPENDENCIES.md",
-    "hatch_build.py",
-    "SECURITY.md",
-    ".gitleaks.toml",
-    "pyproject.toml",
-}
+ROOT_FILE_RE = re.compile(r"^[\w.-]+\.(?:lock|md|py|toml|txt|yml|yaml|json)$")
 PATH_RE = re.compile(
     r"^(?:(?:src|tests|scripts|\.github|docs|security|requirements)/[\w./-]+)$"
 )
@@ -102,7 +95,7 @@ def test_every_cited_path_exists():
     cited = 0
     for p in docs():
         for token in re.findall(r"`([^`\n]+)`", p.read_text()):
-            if PATH_RE.match(token) or token in ROOT_FILES:
+            if PATH_RE.match(token) or ROOT_FILE_RE.match(token):
                 cited += 1
                 assert (ROOT / token).exists(), f"{p.name}: {token}"
     assert cited > 40
