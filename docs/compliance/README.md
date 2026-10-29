@@ -16,10 +16,10 @@ IDs and titles were checked programmatically against NIST's published catalogs o
 
 | Source | URL | Retrieved | Result |
 |---|---|---|---|
-| SP 800-53 Rev 5 OSCAL catalog (5.2.0) | https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json | 2026-10-29 | All 14 control IDs and titles in `800-53.md` match. |
-| SP 800-171 Rev 3 OSCAL catalog (1.1.0) | https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-171/rev3/json/NIST_SP800-171_rev3_catalog.json | 2026-10-29 | All Rev 3 IDs and titles in `800-171.md` match. |
+| SP 800-53 Rev 5 OSCAL catalog (5.2.0) | https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json | 2026-10-29 | All 14 control IDs and titles in 800-53.md match. |
+| SP 800-171 Rev 3 OSCAL catalog (1.1.0) | https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-171/rev3/json/NIST_SP800-171_rev3_catalog.json | 2026-10-29 | All Rev 3 IDs and titles in 800-171.md match. |
 | SP 800-171 Rev 2 (Update 1) requirements spreadsheet | https://csrc.nist.gov/files/pubs/sp/800/171/r2/upd1/final/docs/sp800-171r2-security-reqs.xlsx | 2026-10-29 | All 8 Rev 2 IDs exist, and their requirement text matches the topic of the row. Rev 2 has no requirement titles, so the Title column uses the Rev 3 title. |
-| SP 800-218 SSDF v1.1 table | https://csrc.nist.gov/files/pubs/sp/800/218/final/docs/nist.sp.800-218.ssdf-table.xlsx | 2026-10-29 | All 19 practice IDs and titles in `SSDF.md` match. v1.1 has no PW.3. |
+| SP 800-218 SSDF v1.1 table | https://csrc.nist.gov/files/pubs/sp/800/218/final/docs/nist.sp.800-218.ssdf-table.xlsx | 2026-10-29 | All 19 practice IDs and titles in SSDF.md match. v1.1 has no PW.3. |
 
 No row is marked "(ID unverified)", because every source above could be fetched.
 
