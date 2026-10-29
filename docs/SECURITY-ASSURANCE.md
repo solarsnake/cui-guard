@@ -5,11 +5,11 @@ This document says what each release carries, how to verify it, what the test su
 ## What every release carries
 
 - The wheel and the sdist, with the CycloneDX SBOM embedded in the wheel at `.dist-info/sboms/cui-guard.cdx.json`.
-- The SBOM as a release asset (`cui-guard.cdx.json`), the subject of no attestation itself; its SBOM attestation binds it to the wheel and sdist. It loads directly into OWASP Dependency-Track and similar tools, so you can monitor the runtime set for new vulnerabilities.
+- The SBOM as a release asset (`cui-guard.cdx.json`), a build provenance subject; its SBOM attestation also binds it to the wheel and sdist. It loads directly into OWASP Dependency-Track and similar tools, so you can monitor the runtime set for new vulnerabilities.
 - The security report (`summary.md` and `report.json`): dependency audit with VEX status, static-analysis, secret and workflow gate results, suite pass counts, the KNOWN_GAP list, the SBOM digest, the reproducible-build digests and tool versions. It never contains matched values.
 - `vex.cdx.json`: the reviewed list of dismissed findings, each with a justification and a review-by date.
 - `runtime.lock.txt`: the hash-locked runtime dependency set.
-- GitHub attestations: build provenance for the wheel and sdist, and an SBOM attestation (`actions/attest`).
+- GitHub attestations (`actions/attest`): build provenance for every release asset (the wheel, the sdist, `cui-guard.cdx.json`, `vex.cdx.json`, `runtime.lock.txt`, `summary.md` and `report.json`), and an SBOM attestation for the wheel and sdist.
 - PyPI attestations (PEP 740), published automatically through Trusted Publishing.
 
 ## Verifying a release
@@ -26,6 +26,13 @@ gh attestation verify cui_guard-<version>-py3-none-any.whl --repo <owner>/cui-gu
 # PyPI attestation: the project page shows the provenance for each file. To check it from
 # the command line, query the PyPI integrity API and compare the file's digest
 curl -s https://pypi.org/integrity/cui-guard/<version>/cui_guard-<version>-py3-none-any.whl/provenance
+
+# Verify the runtime hash lock before trusting its hashes: it is the root of the install
+gh attestation verify runtime.lock.txt --repo <owner>/cui-guard
+
+# The VEX and the security report are provenance subjects too
+gh attestation verify vex.cdx.json --repo <owner>/cui-guard
+gh attestation verify report.json --repo <owner>/cui-guard
 
 # Install exactly the locked runtime set, with hashes enforced
 pip install --require-hashes -r runtime.lock.txt

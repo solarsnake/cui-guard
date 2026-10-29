@@ -62,6 +62,8 @@ jobs:
       contents: read
     env:
       UV_PYTHON_DOWNLOADS: never
+      # A SKIPPED gate fails here (scripts/check and report.py strict mode).
+      CUI_GUARD_STRICT: "1"
       # Release tarball checksum from gitleaks_8.30.1_checksums.txt.
       GITLEAKS_VERSION: "8.30.1"
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -92,8 +94,14 @@ jobs:
           tar -xzf gitleaks.tar.gz -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
           rm gitleaks.tar.gz
           echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
-      - name: Gates
-        run: scripts/check audit secrets workflows sbom build report
+      # `report` runs every gate, continues past failures, writes the report and exits 1 on any
+      # failure, so the summary and upload below still have a report to publish.
+      - name: Gates and report
+        run: scripts/check report
+      # Absolute-latency tests (`@pytest.mark.perf`) run only here, on one Linux runner.
+      - name: Performance budget tests
+        if: ${{ !cancelled() }}
+        run: scripts/check perf
       - name: Add report to the job summary
         if: ${{ !cancelled() }}
         run: cat build/security-report/summary.md >> "$GITHUB_STEP_SUMMARY"

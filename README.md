@@ -101,6 +101,7 @@ Each release carries an SBOM, build provenance and a hash-locked runtime set. To
 
 ```
 gh attestation verify cui_guard-<version>-py3-none-any.whl --repo <owner>/cui-guard
+gh attestation verify runtime.lock.txt --repo <owner>/cui-guard
 pip install --require-hashes -r runtime.lock.txt
 ```
 

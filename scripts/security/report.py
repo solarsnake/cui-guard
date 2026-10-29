@@ -3,6 +3,8 @@
 Usage: report.py render --raw DIR --out DIR   write report.json and summary.md; exit 1 if
                                               any gate failed or never reported
 
+With CUI_GUARD_STRICT=1 (CI's security job and the release), a SKIPPED gate also fails.
+
 `scripts/check report` fills DIR (the raw dir) with, per gate, `<gate>.status` ("PASS|FAIL|
 SKIPPED <seconds> [reason]"), junit XML for the pytest gates, `audit-<lock>-<source>.json`
 from pip-audit, `sbom.sha256`, `build-a.digests`, `build-b.digests` and `tools.txt`.
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -168,8 +171,13 @@ def tool_versions(raw: Path) -> dict[str, str]:
     return out
 
 
+def strict_mode() -> bool:
+    return os.environ.get("CUI_GUARD_STRICT") == "1"
+
+
 def build_report(raw: Path) -> dict:
     errors: list[str] = []
+    strict = strict_mode()
 
     def section(name: str, fn, default):
         try:
@@ -216,9 +224,11 @@ def build_report(raw: Path) -> dict:
     commit = git("rev-parse", "HEAD")
     gaps = section("known gaps", known_gaps, [])
     skipped = [g for g, v in gates.items() if v["status"] == "SKIPPED"]
-    ok = not errors and all(v["status"] in ("PASS", "SKIPPED") for v in gates.values())
+    passing = ("PASS",) if strict else ("PASS", "SKIPPED")
+    ok = not errors and all(v["status"] in passing for v in gates.values())
     return {
         "ok": ok,
+        "strict": strict,
         "errors": errors,
         "skipped_gates": skipped,
         "commit": commit or "unknown",
@@ -246,6 +256,9 @@ def render_summary(r: dict) -> str:
             if r["skipped_gates"]
             else ""
         ),
+        "Mode: strict (a skipped gate fails)"
+        if r["strict"]
+        else "Mode: local (skipped gates pass)",
         f"Commit: {r['commit']}{' (dirty tree)' if r['dirty'] else ''}",
         f"Date: {r['date']}",
         "Tools: " + (", ".join(f"{k} {v}" for k, v in r["tools"].items()) or "none"),
@@ -316,9 +329,8 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.out / "summary.md").write_text(render_summary(report))
-    bad = [
-        g for g, s in report["gates"].items() if s["status"] not in ("PASS", "SKIPPED")
-    ]
+    passing = ("PASS",) if report["strict"] else ("PASS", "SKIPPED")
+    bad = [g for g, s in report["gates"].items() if s["status"] not in passing]
     for g in bad:
         print(f"gate {g}: {report['gates'][g]['status']}", file=sys.stderr)
     for e in report["errors"]:

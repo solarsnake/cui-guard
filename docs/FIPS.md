@@ -40,12 +40,13 @@ Python from python.org, Homebrew, pyenv or uv's standalone builds carries its ow
 Install from the hash lock with the distribution's Python, so no unpinned package is fetched:
 
 ```
+gh attestation verify runtime.lock.txt --repo <owner>/cui-guard
 python3.12 -m venv /opt/cui-guard
 /opt/cui-guard/bin/pip install --require-hashes -r runtime.lock.txt
 /opt/cui-guard/bin/pip install --no-deps cui_guard-<version>-py3-none-any.whl
 ```
 
-Verify the wheel first, as described in [SECURITY-ASSURANCE.md](SECURITY-ASSURANCE.md).
+Verify the wheel and the lock first, as described in [SECURITY-ASSURANCE.md](SECURITY-ASSURANCE.md).
 
 Then set `fips = "require"` in the organization policy (`/etc/cui-guard/policy.toml`).
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -28,12 +29,19 @@ def copy_fixture(raw: Path) -> Path:
     return raw
 
 
-def render(raw: Path, out: Path) -> subprocess.CompletedProcess[str]:
+def render(
+    raw: Path, out: Path, strict: bool = False
+) -> subprocess.CompletedProcess[str]:
+    # The mode is set per test: CI's security job runs this suite with CUI_GUARD_STRICT=1.
+    env = {k: v for k, v in os.environ.items() if k != "CUI_GUARD_STRICT"}
+    if strict:
+        env["CUI_GUARD_STRICT"] = "1"
     return subprocess.run(
         [sys.executable, str(SCRIPT), "render", "--raw", str(raw), "--out", str(out)],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
@@ -246,3 +254,57 @@ def test_missing_fips_status_fails(tmp_path):
     done, report, _ = run_case(tmp_path, lambda raw: (raw / "fips.status").unlink())
     assert done.returncode == 1
     assert report["gates"]["fips"]["status"] == "MISSING"
+
+
+def test_strict_mode_fails_on_a_skipped_gate(tmp_path):
+    raw = copy_fixture(
+        tmp_path / "raw"
+    )  # secrets and workflows are SKIPPED in the fixture
+    out = tmp_path / "out"
+    done = render(raw, out, strict=True)
+    assert done.returncode == 1
+    report = json.loads((out / "report.json").read_text())
+    assert report["ok"] is False and report["strict"] is True
+    assert report["gates"]["secrets"]["status"] == "SKIPPED"
+    summary = (out / "summary.md").read_text()
+    assert "Overall: FAIL (2 skipped: secrets, workflows)" in summary
+    assert "Mode: strict" in summary
+    assert "gate secrets: SKIPPED" in done.stderr
+
+
+def test_strict_mode_passes_when_every_gate_ran(tmp_path):
+    raw = copy_fixture(tmp_path / "raw")
+    for gate in ("secrets", "workflows"):
+        (raw / f"{gate}.status").write_text("PASS 1\n")
+    done = render(raw, tmp_path / "out", strict=True)
+    assert done.returncode == 0, done.stderr
+    assert render(raw, tmp_path / "local").returncode == 0
+
+
+def test_local_mode_is_the_default(tmp_path):
+    done = render(copy_fixture(tmp_path / "raw"), tmp_path / "out")
+    assert done.returncode == 0
+    report = json.loads((tmp_path / "out" / "report.json").read_text())
+    assert report["strict"] is False
+
+
+def _check(gate: str, root: Path, strict: bool) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k != "CUI_GUARD_STRICT"}
+    env["CUI_GUARD_ROOT"] = str(root)  # no .github/workflows here: the gate skips
+    if strict:
+        env["CUI_GUARD_STRICT"] = "1"
+    return subprocess.run(
+        [str(ROOT / "scripts" / "check"), gate],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
+def test_check_strict_mode_turns_a_skip_into_a_failure(tmp_path):
+    local = _check("workflows", tmp_path, strict=False)
+    assert local.returncode == 0 and "== workflows: SKIPPED" in local.stdout
+    strict = _check("workflows", tmp_path, strict=True)
+    assert strict.returncode == 1
+    assert "== workflows: FAIL (skipped in strict mode: no workflows yet)" in strict.stdout

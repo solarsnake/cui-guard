@@ -70,3 +70,68 @@ def test_dependabot_cooldown():
         assert u["directory"] == "/"
         assert u["schedule"]["interval"] == "weekly"
     assert set(updates["uv"]["groups"]) and "minor" in str(updates["uv"]["groups"])
+
+
+def _wf(name: str) -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
+
+
+def _runs(job: dict) -> list[str]:
+    return [s.get("run", "") for s in job["steps"]]
+
+
+def _gitleaks_install(job: dict) -> str:
+    return next(r for r in _runs(job) if "gitleaks" in r and "sha256sum --check --strict" in r)
+
+
+def test_ci_security_job_is_strict_and_keeps_the_report_on_failure():
+    job = _wf("ci.yml")["jobs"]["security"]
+    assert job["env"]["CUI_GUARD_STRICT"] == "1"
+    assert "scripts/check report" in _runs(job)
+    assert "scripts/check perf" in _runs(job)
+    after = job["steps"][_runs(job).index("scripts/check report") + 1 :]
+    assert after and all(s.get("if") == "${{ !cancelled() }}" for s in after)
+    checkout = job["steps"][0]
+    assert checkout["with"]["fetch-depth"] == 0
+
+
+def test_ci_matrix_runs_no_perf_tests():
+    job = _wf("ci.yml")["jobs"]["test"]
+    gates = next(r for r in _runs(job) if r.startswith("scripts/check"))
+    assert "test" in gates.split() and "perf" not in gates.split()
+    check = (ROOT / "scripts" / "check").read_text()
+    assert 'gate_test() { (cd "$ROOT" && "$(tool pytest)" -q -m "not perf"' in check
+    assert 'gate_perf() { (cd "$ROOT" && "$(tool pytest)" -q -m perf); }' in check
+    assert "for g in lint test perf lock audit secrets workflows sbom build; do" in check
+
+
+def test_release_runs_strict_report_with_gitleaks_and_full_history():
+    ci, rel = _wf("ci.yml")["jobs"]["security"], _wf("release.yml")["jobs"]["build"]
+    assert rel["env"]["CUI_GUARD_STRICT"] == "1"
+    for key in ("GITLEAKS_VERSION", "GITLEAKS_SHA256"):
+        assert rel["env"][key] == ci["env"][key]
+    assert _gitleaks_install(rel) == _gitleaks_install(ci)
+    assert rel["steps"][0]["with"]["fetch-depth"] == 0
+    assert any(r.rstrip().endswith("scripts/check report") for r in _runs(rel))
+    for step in rel["steps"]:
+        if step.get("name") in ("Add report to the job summary", "Upload security report"):
+            assert step["if"] == "${{ !cancelled() }}"
+
+
+def test_every_release_asset_is_a_provenance_subject():
+    jobs = _wf("release.yml")["jobs"]
+    steps = {s.get("name"): s for s in jobs["attest"]["steps"]}
+    subjects = set(steps["Attest build provenance"]["with"]["subject-path"].split())
+    assert subjects == {
+        "files/build/dist-a/*",
+        "files/build/sbom/cui-guard.cdx.json",
+        "files/security/vex.cdx.json",
+        "files/requirements/runtime.lock.txt",
+        "files/build/security-report/summary.md",
+        "files/build/security-report/report.json",
+    }
+    create = next(r for r in _runs(jobs["github-release"]) if "gh release create" in r)
+    for asset in re.findall(r"files/\S+", create):
+        assert asset in subjects or asset == "files/build/sbom/*", asset
+    assurance = (ROOT / "docs" / "SECURITY-ASSURANCE.md").read_text()
+    assert "gh attestation verify runtime.lock.txt --repo <owner>/cui-guard" in assurance
