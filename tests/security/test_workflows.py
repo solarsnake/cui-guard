@@ -88,7 +88,8 @@ def test_ci_security_job_is_strict_and_keeps_the_report_on_failure():
     job = _wf("ci.yml")["jobs"]["security"]
     assert job["env"]["CUI_GUARD_STRICT"] == "1"
     assert "scripts/check report" in _runs(job)
-    assert "scripts/check perf" in _runs(job)
+    check = (ROOT / "scripts" / "check").read_text()
+    assert "for g in lint lock test perf leak fuzz" in check  # report runs perf
     after = job["steps"][_runs(job).index("scripts/check report") + 1 :]
     assert after and all(s.get("if") == "${{ !cancelled() }}" for s in after)
     checkout = job["steps"][0]

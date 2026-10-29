@@ -3,7 +3,7 @@
 Usage: report.py render --raw DIR --out DIR   write report.json and summary.md; exit 1 if
                                               any gate failed or never reported
 
-With CUI_GUARD_STRICT=1 (CI's security job and the release), a SKIPPED gate also fails.
+With CUI_GUARD_STRICT=1 (every CI job, nightly and the release), a SKIPPED gate also fails.
 
 `scripts/check report` fills DIR (the raw dir) with, per gate, `<gate>.status` ("PASS|FAIL|
 SKIPPED <seconds> [reason]"), junit XML for the pytest gates, `audit-<lock>-<source>.json`

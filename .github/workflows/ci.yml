@@ -98,14 +98,11 @@ jobs:
           tar -xzf gitleaks.tar.gz -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
           rm gitleaks.tar.gz
           echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
-      # `report` runs every gate, continues past failures, writes the report and exits 1 on any
-      # failure, so the summary and upload below still have a report to publish.
+      # `report` runs every gate (including the absolute-latency `perf` tests, which run
+      # only here, on one Linux runner), continues past failures, writes the report and
+      # exits 1 on any failure, so the summary and upload below still have a report to publish.
       - name: Gates and report
         run: scripts/check report
-      # Absolute-latency tests (`@pytest.mark.perf`) run only here, on one Linux runner.
-      - name: Performance budget tests
-        if: ${{ !cancelled() }}
-        run: scripts/check perf
       - name: Add report to the job summary
         if: ${{ !cancelled() }}
         run: cat build/security-report/summary.md >> "$GITHUB_STEP_SUMMARY"

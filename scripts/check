@@ -3,7 +3,7 @@
 # Gates: lint, test, perf, lock, leak, fuzz, audit, secrets, workflows, sbom, build, fips, all, report. Add a gate by appending a case branch.
 # `all` leaves out fips: it needs Docker (CI runs it in its own job; `report` includes it).
 # `test` leaves out absolute-latency tests (`@pytest.mark.perf`); the `perf` gate runs only those.
-# CUI_GUARD_STRICT=1 (CI's security job and the release) makes a SKIPPED gate a FAIL.
+# CUI_GUARD_STRICT=1 (set for every CI job, nightly and the release) makes a SKIPPED gate a FAIL.
 set -euo pipefail
 
 export UV_PYTHON_DOWNLOADS=never
