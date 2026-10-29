@@ -44,7 +44,12 @@ def test_fips_doc_framing():
     text = read("docs/FIPS.md")
     assert "uses the platform's FIPS 140-3 validated module" in text
     assert "FIPS compliant" not in text
-    for check in ("`os`", "`openssl-fips-provider`", "`hashlib-openssl`", "`kernel-fips`"):
+    for check in (
+        "`os`",
+        "`openssl-fips-provider`",
+        "`hashlib-openssl`",
+        "`kernel-fips`",
+    ):
         assert check in text, check
 
 
@@ -54,7 +59,14 @@ def test_no_compliance_claims():
         r"|\bSLSA (Build )?(Level|L)\s*[34]\b|\bcompliant\b",
         re.IGNORECASE,
     )
-    for p in [ROOT / "SECURITY.md", *(ROOT / "docs").glob("*.md"), ROOT / "README.md"]:
+    scanned = [
+        ROOT / "SECURITY.md",
+        *(ROOT / "docs").glob("*.md"),
+        *(ROOT / "docs" / "compliance").glob("*.md"),
+        ROOT / "docs" / "FIPS.md",
+        ROOT / "README.md",
+    ]
+    for p in scanned:
         assert not banned.search(p.read_text()), p
 
 

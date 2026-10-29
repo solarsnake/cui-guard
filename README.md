@@ -113,6 +113,7 @@ The full steps, including the PyPI attestation check and SBOM extraction, are in
 - [docs/SECURITY-ASSURANCE.md](docs/SECURITY-ASSURANCE.md): what a release carries, how to verify it, known gaps.
 - [docs/MAINTAINER-SECURITY.md](docs/MAINTAINER-SECURITY.md): maintainer checklist.
 - [docs/FIPS.md](docs/FIPS.md): FIPS mode deployment guide.
+- [docs/compliance/README.md](docs/compliance/README.md): NIST SSDF, SP 800-171 and SP 800-53 evidence mappings.
 
 ## License
 

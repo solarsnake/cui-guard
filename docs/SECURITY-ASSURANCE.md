@@ -66,6 +66,10 @@ Each evasion transform below is pinned as a strict expected failure in `tests/re
 
 Other residual risks are listed in [LIMITS.md](LIMITS.md) and the [threat model](THREAT-MODEL.md).
 
+## NIST evidence mappings
+
+Mappings from cui-guard features and project practices to NIST SSDF, SP 800-171 and SP 800-53 are in [docs/compliance/](compliance/README.md). They are evidence maps. They do not certify, assess or authorize anything.
+
 ## Provenance level
 
 SLSA Build Level 2 as GitHub implements it; no claim beyond that.
