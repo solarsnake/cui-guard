@@ -34,3 +34,8 @@ jobs:
         uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: /language:${{ matrix.language }}
+          output: sarif-results
+      # Gate: any error or warning result not triaged in security/codeql-triage.json fails the
+      # job. Dismissing an alert in the GitHub UI does not count.
+      - name: CodeQL gate
+        run: python3 scripts/security/sarif_gate.py check sarif-results/*.sarif

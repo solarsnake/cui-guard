@@ -6,7 +6,7 @@ import json
 import subprocess
 import sys
 import tomllib
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -160,7 +160,13 @@ def test_cli_untriaged_finding_fails(tmp_path):
 
 
 def test_cli_triaged_by_alias_passes(tmp_path):
-    vex = vex_with(id="CVE-2099-1", review_by="2099-01-01", recorded="2099-01-01")
+    # The CLI checks against the real date; a future `recorded` date is itself a problem.
+    today = date.today()
+    vex = vex_with(
+        id="CVE-2099-1",
+        review_by=(today + timedelta(days=30)).isoformat(),
+        recorded=today.isoformat(),
+    )
     r = _run_check(tmp_path, vex, [_report("PYSEC-2026-9", ["CVE-2099-1"])])
     assert r.returncode == 0, r.stderr
 
@@ -196,3 +202,9 @@ def test_cli_non_report_json_fails(tmp_path):
         r = _run_check(d, load(), [body])
         assert r.returncode == 1, body
         assert "no dependencies list" in r.stderr
+
+
+def test_future_recorded_date_flagged():
+    found = problems(vex_with(recorded="2026-11-01", review_by="2026-12-01"), TODAY, None)
+    assert any("recorded date is in the future" in f for f in found)
+    assert not problems(vex_with(recorded="2026-10-27", review_by="2026-12-01"), TODAY, None)

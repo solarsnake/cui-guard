@@ -56,6 +56,8 @@ def problems(vex: dict, today: date, audited_ids: set[str] | None) -> list[str]:
             out.append(f"{vid}: missing or invalid {REVIEW_BY}")
         if recorded is None:
             out.append(f"{vid}: missing or invalid {RECORDED}")
+        if recorded is not None and recorded > today:
+            out.append(f"{vid}: recorded date is in the future")
         if review_by is not None and review_by < today:
             out.append(f"{vid}: review-by {review_by} expired (today is {today})")
         if (
