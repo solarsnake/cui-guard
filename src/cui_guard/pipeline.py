@@ -174,6 +174,10 @@ class Pipeline:
         digest = _sha256(seg.text)
         to_mask: list[Hit] = []
         for hit in hits:
+            # A placeholder this session issued is already masked (e.g. a withheld tool
+            # call echoed back in history); re-masking it would mint a second placeholder.
+            if PLACEHOLDER_RE.fullmatch(hit.value) and self._smap.knows(hit.value):
+                continue
             action = self._policy.action_for(hit, self._trust)
             if action == Action.ALLOW:
                 d.hit_counts[hit.rule_id] = d.hit_counts.get(hit.rule_id, 0) + 1

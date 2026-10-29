@@ -31,6 +31,7 @@ async def test_override_granted_after_auth_then_retry_forwards(tmp_path):
     async with client(make_cfg(tmp_path), up, channel=ch) as c:
         r = await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)
         assert r.status_code == 400 and "Override offered on your screen" in r.json()["error"]["message"]
+        assert "Esc Esc" in r.json()["error"]["message"]  # how to get blocked content out of history
         assert up.requests == []
         assert await until(lambda: override_rows(tmp_path))
         r = await c.post("/v1/messages", json=msg(f"here {CUI} data"), headers=H)

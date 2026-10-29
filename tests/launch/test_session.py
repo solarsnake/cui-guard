@@ -197,6 +197,9 @@ def test_banner_mentions_passthrough_tradeoff():
     assert "anthropic" in text and "public" in text and "passthrough" in text
     assert "Trade-off" in text and "Consumer-plan" in text
     assert "compliant" not in text.lower()
+    # With no user or org config, the settings line is one short phrase, not every key.
+    assert "settings from: built-in defaults only" in text
+    assert "=builtin" not in text and "=invariant" not in text
 
 
 def test_gateway_exits_when_launcher_stdin_closes():

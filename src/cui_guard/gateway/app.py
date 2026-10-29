@@ -209,6 +209,14 @@ def _fail_block(rule_id: str, location: str, why: str) -> Decision:
     return Decision(blocked=[block], hit_counts={rule_id: 1})
 
 
+# Agents resend the whole conversation, so blocked content keeps blocking every turn.
+HISTORY_HINT = (
+    "If this content is already in the conversation, every later request repeats it and is "
+    "blocked too: remove it by rewinding the conversation (Esc Esc in Claude Code) or starting "
+    "a new one (/clear)."
+)
+
+
 def _block_message(
     decision: Decision, offered: bool, messages: dict[str, str], poc: str | None
 ) -> str:
@@ -219,10 +227,12 @@ def _block_message(
     msg = "cui-guard blocked this request: " + "; ".join(parts) + ". "
     if any(b.cls == DetClass.CLASSIFIED_MARKING for b in decision.blocked):
         msg += " ".join(render(messages["stop.classified"], poc).split())
-    elif offered and ids:
-        msg += f"Override offered on your screen (ID {', '.join(dict.fromkeys(ids))})."
     else:
-        msg += " ".join(render(messages["blocked.no_override"], poc).split())
+        if offered and ids:
+            msg += f"Override offered on your screen (ID {', '.join(dict.fromkeys(ids))})."
+        else:
+            msg += " ".join(render(messages["blocked.no_override"], poc).split())
+        msg += f" {HISTORY_HINT}"
     return msg
 
 

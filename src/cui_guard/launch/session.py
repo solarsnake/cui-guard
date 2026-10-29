@@ -316,7 +316,8 @@ def start_gateway(
 
 def banner(session: GatewaySession, policy: EffectivePolicy) -> str:
     prov = policy.provenance
-    layers = ", ".join(f"{k}={v}" for k, v in sorted(prov.items())) or "builtin"
+    custom = {k: v for k, v in prov.items() if v not in ("builtin", "invariant")}
+    layers = ", ".join(f"{k}={v}" for k, v in sorted(custom.items())) or "built-in defaults only"
     lines = [
         "cui-guard session",
         f"  lane:        {session.lane.name} ({session.lane.url})",

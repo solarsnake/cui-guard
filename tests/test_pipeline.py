@@ -359,3 +359,18 @@ def test_clean_and_placeholder_headers_pass():
 def test_header_hit_allowed_on_approved_lane():
     pipe, _ = make(Trust.APPROVED)
     assert pipe.evaluate(hdr_view(x_host="db.example.mil")).forward
+
+
+def test_own_placeholder_in_history_is_not_masked_again():
+    """A withheld tool call echoes its placeholder back; it must keep the same placeholder."""
+    pipe, _ = make()
+    first = pipe.evaluate(view("Contact canary.person@example.mil."))
+    ph = first.replacements[0].split()[1].rstrip(".")
+    assert ph == "person01@example.invalid"
+    d = pipe.evaluate(view("Contact canary.person@example.mil.", f"curl -s 'https://example.com/?q={ph}'"))
+    assert d.forward
+    assert 1 not in d.replacements  # the echoed placeholder is forwarded as-is
+    assert len(pipe._smap) == 1  # no placeholder-of-a-placeholder was minted
+    # A placeholder-shaped value this session never issued is masked like any email.
+    d = pipe.evaluate(view("mail person99@example.invalid"))
+    assert "person99@example.invalid" not in d.replacements[0]
