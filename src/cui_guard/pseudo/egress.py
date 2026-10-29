@@ -8,11 +8,7 @@ import string
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
-from cui_guard.detect.identifiers import (
-    BUILTIN_DOMAINS,
-    BUILTIN_IP_RANGES,
-    IdentifierConfig,
-)
+from cui_guard.detect.identifiers import IdentifierConfig
 from cui_guard.detect.normalize import normalize
 
 if TYPE_CHECKING:
@@ -161,11 +157,11 @@ class EgressGuard:
         if mode not in ("withhold", "allow"):
             raise ValueError(f"unknown egress_rehydration mode {mode!r}")
         self.mode = mode
-        self._domains = tuple(
-            d.strip(".").lower() for d in BUILTIN_DOMAINS + identifiers.domains if d.strip(".")
-        )
+        # Internal is only what the user or organization configured: the detector's built-in
+        # `mil`/`gov` domains and private IP ranges are a detection aid, never a trust grant.
+        self._domains = tuple(d.strip(".").lower() for d in identifiers.domains if d.strip("."))
         nets = []
-        for r in BUILTIN_IP_RANGES + identifiers.ip_ranges:
+        for r in identifiers.ip_ranges:
             try:
                 nets.append(ipaddress.ip_network(r, strict=False))
             except ValueError as e:

