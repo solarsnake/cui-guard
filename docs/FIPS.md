@@ -1,6 +1,6 @@
 # FIPS mode deployment guide
 
-FIPS 140-3 validates cryptographic modules, not applications. cui-guard is not a cryptographic module and is not validated. In FIPS mode it uses the platform's FIPS 140-3 validated module, and it refuses to start unless the platform reports its FIPS provider as active. The checks show the provider is active, not that a certificate covers the installed build, so cite the platform vendor's CMVP certificate.
+FIPS 140-3 validates cryptographic modules, not applications. cui-guard is not a cryptographic module and is not validated. In FIPS mode it uses the platform's FIPS provider, and it refuses to start unless that provider reports itself active. The checks show the provider is active, not that a certificate covers the installed build, so cite the platform vendor's CMVP certificate.
 
 ## What FIPS mode is
 
@@ -31,7 +31,7 @@ It does not cover:
 ## Supported platforms
 
 - **RHEL 9** (or a rebuild that ships Red Hat's FIPS provider) with the system switched to FIPS mode (`fips-mode-setup --enable`, then reboot). Use the distribution's Python (`python3.12` from the RHEL repositories), which links the system OpenSSL and its FIPS provider.
-- **Ubuntu Pro with the FIPS packages** enabled (`pro enable fips-updates` or `fips`), with the distribution's Python.
+- Tested on **Red Hat UBI 9** only (the `scripts/check fips` container). Other platforms, such as Ubuntu 22.04 or later Pro with the FIPS packages enabled (`pro enable fips-updates` or `fips`, OpenSSL 3) and the distribution's Python, are expected to work but are untested.
 
 Python from python.org, Homebrew, pyenv or uv's standalone builds carries its own OpenSSL, which has no FIPS provider. Those interpreters fail `openssl-fips-provider`.
 

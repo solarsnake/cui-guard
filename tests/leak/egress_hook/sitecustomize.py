@@ -15,6 +15,8 @@ _LOG = os.environ.get("CUI_GUARD_EGRESS_LOG")
 
 
 def _record(op: str, host: object, port: object) -> None:
+    if isinstance(host, bytes):  # anyio and asyncio may pass an encoded host name
+        host = host.decode("ascii", "replace")
     line = json.dumps({"op": op, "host": str(host), "port": port}) + "\n"
     fd = os.open(str(_LOG), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:

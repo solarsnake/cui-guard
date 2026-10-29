@@ -1,7 +1,8 @@
 """TLS baseline for upstreams, FIPS mode checks and the Python support table (design 8.2, 8.3).
 
 FIPS 140-3 validates cryptographic modules, not applications. FIPS mode here means
-cui-guard refuses to run unless the platform's validated module is the one in use.
+cui-guard uses the platform's FIPS provider and refuses to run unless that provider reports
+itself active; the customer cites the platform vendor's CMVP certificate.
 This is the only module in cui_guard that touches `ssl` or OpenSSL internals (see
 tests/security/test_crypto_inventory.py).
 """

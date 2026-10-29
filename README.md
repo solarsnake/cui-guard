@@ -17,7 +17,8 @@ Supported platforms: macOS and Linux (including WSL2). Python 3.11 or newer.
 ```
 pip install uv
 uv sync --group dev               # or: pip install -e . --group dev  (pip 25.1 or newer)
-scripts/check all                 # lint, test, lock
+scripts/check all                 # lint, test, perf, lock, audit (needs network), secrets (needs gitleaks), workflows, sbom, build
+scripts/check report              # every gate including leak, fuzz and fips (Docker); writes build/security-report
 ```
 
 Release wheels embed the SBOM (`scripts/check sbom` builds it); dev builds may not.

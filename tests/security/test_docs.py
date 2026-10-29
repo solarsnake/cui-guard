@@ -42,7 +42,10 @@ def test_security_md_sections():
 
 def test_fips_doc_framing():
     text = read("docs/FIPS.md")
-    assert "uses the platform's FIPS 140-3 validated module" in text
+    assert "it uses the platform's FIPS provider, and it refuses to start unless that provider reports itself active" in text
+    assert "validated module" not in text
+    assert "cite the platform vendor's CMVP certificate" in text
+    assert "Tested on **Red Hat UBI 9** only" in text and "expected to work but are untested" in text
     assert "FIPS compliant" not in text
     for check in (
         "`os`",

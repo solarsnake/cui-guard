@@ -9,7 +9,7 @@ from urllib.parse import quote
 import httpx
 import pytest
 from canaries import CANARIES, FORMATS, PATHS, build, carrier
-from harness import text_response
+from harness import Dirs, launch_gateway, text_response
 
 # Canaries a public lane masks (forwarded, rewritten), versus those it blocks outright.
 BLOCKING = {"cui", "classified", "controlled"}
@@ -133,10 +133,17 @@ def test_only_configured_upstream_is_contacted(gateways, upstream, fmt):
     assert {e["port"] for e in log} <= {upstream.port}
 
 
-def test_no_dns_lookups_beyond_upstream(gateways, upstream):
-    gw = gateways("public")
-    gw.post(PATHS["anthropic"], build("anthropic", "user", "hello", False))
-    lookups = [e for e in gw.egress_log() if e["op"] == "getaddrinfo"]
+def test_no_dns_lookups_beyond_upstream(upstream, tmp_path):
+    # The lane names `localhost`, so the gateway must resolve it: the hook has to record that
+    # lookup (a numeric 127.0.0.1 lane is resolved without getaddrinfo, which made this vacuous).
+    url = upstream.url.replace("127.0.0.1", "localhost")
+    gw = launch_gateway(Dirs(tmp_path / "gw"), url, "public")
+    try:
+        gw.post(PATHS["anthropic"], build("anthropic", "user", "hello", False))
+        lookups = [e for e in gw.egress_log() if e["op"] == "getaddrinfo"]
+    finally:
+        gw.close()
+    assert lookups, "the hook recorded no name lookups"
     assert {e["host"] for e in lookups} <= {"127.0.0.1", "localhost"}
 
 
@@ -152,7 +159,12 @@ def test_tracebacks_carry_no_canary(gateways, upstream):
     for fmt in FORMATS:
         for body in crafted:
             gw.post(PATHS[fmt], json.dumps(body).encode())
-    gw.post(PATHS["anthropic"], b"[" * 50000 + c.encode())  # recursion bait
+    resp = gw.post(PATHS["anthropic"], b"[" * 50000 + c.encode())  # recursion bait
+    # The bait really fails inside the gateway (blocked as unparseable, never forwarded); a
+    # gateway that accepted it would make this test vacuous.
+    assert resp.status_code >= 400
+    blocked = [json.loads(line) for line in gw.dirs.audit_path.read_text().splitlines()]
+    assert any(r.get("action") == "blocked" for r in blocked), "no blocked request was audited"
     assert not leaked(gw.output())
     assert not leaked(upstream.all_bytes().decode("utf-8", "replace"))
     assert not leaked(state_text(gw))

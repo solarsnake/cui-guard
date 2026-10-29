@@ -265,7 +265,8 @@ def create_app(
         # TLS 1.2 floor and verification for every upstream; ca_file replaces the trust store.
         verify=upstream_ssl_context(lane.ca_file, policy.fips == "require"),
         trust_env=not is_loopback_host(host),  # never route loopback traffic through a proxy
-        timeout=httpx.Timeout(connect=10, read=None, write=60, pool=10),
+        # read is seconds of inactivity, not a total: a hung upstream fails after 10 minutes.
+        timeout=httpx.Timeout(connect=10, read=600, write=60, pool=10),
     )
     base_url = lane.url.rstrip("/")
     tasks: set[asyncio.Task] = set()
