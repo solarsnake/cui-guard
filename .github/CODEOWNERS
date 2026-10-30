@@ -1,0 +1,6 @@
+# Changes to CI, triage records and the enforcement paths need the maintainer's review.
+/.github/                 @solarsnake
+/security/                @solarsnake
+/src/cui_guard/gateway/   @solarsnake
+/src/cui_guard/policy/    @solarsnake
+/src/cui_guard/pseudo/    @solarsnake
