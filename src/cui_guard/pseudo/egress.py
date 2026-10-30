@@ -70,7 +70,7 @@ _SPECIAL = re.compile(
 _URL_AT_HOST = re.compile(r"\[[^\]\n@\[]{1,256}\]|[\w\-][\w\-.]*")
 # user@host, optionally followed by ':' (the scp / git form). Any non-space character before
 # '@' counts, so a quote or backslash (`"http://x.mil"@evil.app`) cannot hide the host.
-_AT = re.compile(r"(?<=\S)@(\[[0-9A-Fa-f:.%\w]{1,256}\]|[\w\-][\w\-.]*)(:?)")
+_AT = re.compile(r"(?<=\S)@(\[[\w:.%]{1,256}\]|[\w\-][\w\-.]*)(:?)")
 # A maximal dotted token: `a.b`, `x.y.z` (labels are Unicode word characters or '-').
 _DOTTED = re.compile(r"(?<![\w\-.])[\w\-]++\.[\w\-.]*")
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")
