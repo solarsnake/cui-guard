@@ -25,7 +25,7 @@ tool() {
 # requirements files are generated into build/locks/ and never committed.
 export_locks() {
   local uv
-  uv="$(tool uv)"
+  uv="$(tool uv)" || return 1
   mkdir -p "$ROOT/build/locks"
   (cd "$ROOT" &&
     "$uv" export --frozen --no-dev --no-emit-project --format requirements-txt -o build/locks/runtime.lock.txt &&
@@ -42,7 +42,7 @@ gate_leak() { (cd "$ROOT" && "$(tool pytest)" -q $(junit leak) tests/leak tests/
 gate_fuzz() { (cd "$ROOT" && HYPOTHESIS_PROFILE="${HYPOTHESIS_PROFILE:-ci}" "$(tool pytest)" -q $(junit fuzz) tests/fuzz); }
 gate_lock() {
   local uv f hint="lock drift: run 'uv lock' (see scripts/check)"
-  uv="$(tool uv)"
+  uv="$(tool uv)" || return 1
   if ! (cd "$ROOT" && "$uv" lock --check); then
     echo "$hint" >&2
     return 1
@@ -137,7 +137,7 @@ gate_sbom() {
 # SOURCE_DATE_EPOCH (HEAD commit time); the wheel must embed the SBOM and every artifact must have an identical SHA-256.
 gate_build() {
   local uv py epoch f listing rc=0
-  uv="$(tool uv)"
+  uv="$(tool uv)" || return 1
   py="$(tool python)"
   epoch="$(git -C "$ROOT" log -1 --format=%ct)" || return 1
   export SOURCE_DATE_EPOCH="$epoch"
