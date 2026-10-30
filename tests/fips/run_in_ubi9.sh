@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run tests/fips in Red Hat UBI 9 with the OpenSSL FIPS provider forced on (design 8.3).
 # Called by `scripts/check fips`. The repository is mounted read-only; dependencies are
-# installed inside the throwaway container from the hash-pinned lock files.
+# installed inside the throwaway container from the hash-pinned files that `scripts/check fips` exports from uv.lock into build/locks.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,10 +19,10 @@ docker run --rm \
   "$IMAGE" -c '
 set -euo pipefail
 # Installs run without the FIPS configuration; only the tests run under it.
-python3 -m pip install --quiet --no-deps --require-hashes -r requirements/runtime.lock.txt
+python3 -m pip install --quiet --no-deps --require-hashes -r build/locks/runtime.lock.txt
 # pytest is not a runtime dependency: take it and its dependencies, hashes included,
 # from the dev lock rather than resolving anything new.
-python3 - requirements/dev.lock.txt >/tmp/pytest.lock.txt <<"PY"
+python3 - build/locks/dev.lock.txt >/tmp/pytest.lock.txt <<"PY"
 import re
 import sys
 
@@ -40,11 +40,13 @@ for line in open(sys.argv[1], encoding="utf-8"):
         out.append(line)
 missing = want - seen
 if missing:
-    sys.exit(f"not in requirements/dev.lock.txt: {sorted(missing)}")
+    sys.exit(f"not in build/locks/dev.lock.txt: {sorted(missing)}")
 sys.stdout.write("".join(out))
 PY
 python3 -m pip install --quiet --no-deps --require-hashes -r /tmp/pytest.lock.txt
 export OPENSSL_CONF=/src/tests/fips/openssl-fips.cnf CUI_GUARD_FIPS_CONTAINER=1 PYTHONPATH=/src/src
 openssl list -providers
+# Red Hat Python logs "code for hash md5 was not found" tracebacks at startup under the FIPS
+# provider (stdlib hashlib, not our code); see docs/FIPS.md. They are left unfiltered.
 python3 -m pytest -q -p no:cacheprovider -rs tests/fips
 '

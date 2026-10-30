@@ -22,7 +22,7 @@ cui-guard is a local gateway between an agent and an LLM endpoint. It is a mista
 A compromised dependency, build tool or GitHub Action; a PyPI account takeover; a typosquat of `cui-guard`.
 
 Controls:
-- One hash-locked environment (`uv.lock`, exported to `requirements/*.lock.txt`), three runtime dependencies, and a 7-day cooldown before adopting new releases.
+- One hash-locked environment (`uv.lock`, which holds a hash for every artifact; the hash-pinned requirements files are generated from it and never committed), three runtime dependencies, and a 7-day cooldown before adopting new releases.
 - `pip-audit` over the locked set, with dismissals only in `security/vex.cdx.json`, each with a justification and a review-by date at most 90 days out (`scripts/security/vex.py`).
 - A CycloneDX SBOM (`scripts/security/sbom.py`) embedded in the wheel.
 - A reproducible-build gate (`scripts/check build`): two builds, identical digests.

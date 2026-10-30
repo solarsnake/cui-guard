@@ -13,7 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SBOM_PY = ROOT / "scripts" / "security" / "sbom.py"
-LOCK = ROOT / "requirements" / "runtime.lock.txt"
+LOCK = ROOT / "build" / "locks" / "runtime.lock.txt"
 EMBEDDED = "build/sbom/cui-guard.cdx.json"
 
 ENV = {**os.environ, "SOURCE_DATE_EPOCH": "1793148053"}
@@ -44,7 +44,7 @@ def lock_hashes() -> dict[str, set[str]]:
 
 
 @pytest.fixture(scope="module")
-def sbom_path(tmp_path_factory) -> Path:
+def sbom_path(tmp_path_factory, locks) -> Path:
     out = tmp_path_factory.mktemp("sbom") / "cui-guard.cdx.json"
     r = run("build", "--out", out)
     assert r.returncode == 0, r.stderr
@@ -97,7 +97,7 @@ def test_sbom_has_no_dev_tools(sbom_path):
     assert not names & {"pytest", "ruff", "zizmor", "pip-audit", "cyclonedx-bom"}
 
 
-def test_sbom_is_deterministic(tmp_path):
+def test_sbom_is_deterministic(tmp_path, locks):
     a, b = tmp_path / "a.json", tmp_path / "b.json"
     assert run("build", "--out", a).returncode == 0
     assert run("build", "--out", b).returncode == 0
@@ -151,8 +151,9 @@ def test_wheel_builds_without_sbom(tmp_path):
 
 
 @pytest.mark.network
-def test_wheel_from_sdist_embeds_sbom(tmp_path):
+def test_wheel_from_sdist_embeds_sbom(tmp_path, locks):
     tree = copy_tree(tmp_path / "tree")
+    shutil.copytree(locks, tree / "build" / "locks")
     sbom = tree / EMBEDDED
     r = subprocess.run(
         [

@@ -14,6 +14,7 @@ jobs:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       security-events: write
     strategy:
@@ -35,6 +36,9 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
           output: sarif-results
+          # Code scanning upload needs GitHub Advanced Security on a private repo; there the
+          # SARIF stays local and the gate below still runs on it.
+          upload: ${{ github.event.repository.private && 'never' || 'always' }}
       # Gate: any error or warning result not triaged in security/codeql-triage.json fails the
       # job. Dismissing an alert in the GitHub UI does not count.
       - name: CodeQL gate

@@ -11,7 +11,13 @@ WF = sorted((ROOT / ".github/workflows").glob("*.yml"))
 
 
 def test_all_five_workflows_exist():
-    assert [p.name for p in WF] == ["ci.yml", "codeql.yml", "nightly.yml", "release.yml", "scorecard.yml"]
+    assert [p.name for p in WF] == [
+        "ci.yml",
+        "codeql.yml",
+        "nightly.yml",
+        "release.yml",
+        "scorecard.yml",
+    ]
 
 
 @pytest.mark.parametrize("path", WF, ids=lambda p: p.name)
@@ -23,7 +29,9 @@ def test_workflow_hardening(path):
     for job in doc["jobs"].values():
         for step in job.get("steps", []):
             if "uses" in step:
-                assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+                assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", step["uses"]), (
+                    step["uses"]
+                )
             if step.get("uses", "").startswith("actions/checkout@"):
                 assert step["with"]["persist-credentials"] is False
             assert "${{" not in step.get("run", ""), step.get("name")
@@ -50,7 +58,11 @@ def test_release_has_no_cache_and_publish_uses_environment():
     assert jobs["attest"]["needs"] == "build"
     assert jobs["publish"]["needs"] == "attest"
     assert jobs["github-release"]["needs"] == "publish"
-    publish = [s for s in jobs["publish"]["steps"] if s.get("uses", "").startswith("pypa/gh-action-pypi-publish@")]
+    publish = [
+        s
+        for s in jobs["publish"]["steps"]
+        if s.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
+    ]
     assert publish
     assert "password" not in publish[0].get("with", {})
 
@@ -58,7 +70,9 @@ def test_release_has_no_cache_and_publish_uses_environment():
 def test_security_events_write_only_on_codeql_analyze():
     doc = yaml.safe_load((ROOT / ".github/workflows/codeql.yml").read_text())
     for name, job in doc["jobs"].items():
-        assert (job["permissions"].get("security-events") == "write") == (name == "analyze")
+        assert (job["permissions"].get("security-events") == "write") == (
+            name == "analyze"
+        )
 
 
 def test_dependabot_cooldown():
@@ -81,7 +95,9 @@ def _runs(job: dict) -> list[str]:
 
 
 def _gitleaks_install(job: dict) -> str:
-    return next(r for r in _runs(job) if "gitleaks" in r and "sha256sum --check --strict" in r)
+    return next(
+        r for r in _runs(job) if "gitleaks" in r and "sha256sum --check --strict" in r
+    )
 
 
 def test_ci_security_job_is_strict_and_keeps_the_report_on_failure():
@@ -102,8 +118,13 @@ def test_ci_matrix_runs_no_perf_tests():
     assert "test" in gates.split() and "perf" not in gates.split()
     check = (ROOT / "scripts" / "check").read_text()
     assert 'gate_test() { (cd "$ROOT" && "$(tool pytest)" -q -m "not perf"' in check
-    assert 'gate_perf() { (cd "$ROOT" && "$(tool pytest)" -q -m perf $(junit perf)); }' in check
-    assert "for g in lint test perf lock audit secrets workflows sbom build; do" in check
+    assert (
+        'gate_perf() { (cd "$ROOT" && "$(tool pytest)" -q -m perf $(junit perf)); }'
+        in check
+    )
+    assert (
+        "for g in lint test perf lock audit secrets workflows sbom build; do" in check
+    )
 
 
 def test_release_runs_strict_report_with_gitleaks_and_full_history():
@@ -115,7 +136,10 @@ def test_release_runs_strict_report_with_gitleaks_and_full_history():
     assert rel["steps"][0]["with"]["fetch-depth"] == 0
     assert any(r.rstrip().endswith("scripts/check report") for r in _runs(rel))
     for step in rel["steps"]:
-        if step.get("name") in ("Add report to the job summary", "Upload security report"):
+        if step.get("name") in (
+            "Add report to the job summary",
+            "Upload security report",
+        ):
             assert step["if"] == "${{ !cancelled() }}"
 
 
@@ -127,7 +151,7 @@ def test_every_release_asset_is_a_provenance_subject():
         "files/build/dist-a/*",
         "files/build/sbom/cui-guard.cdx.json",
         "files/security/vex.cdx.json",
-        "files/requirements/runtime.lock.txt",
+        "files/build/locks/runtime.lock.txt",
         "files/build/security-report/summary.md",
         "files/build/security-report/report.json",
     }
@@ -135,4 +159,7 @@ def test_every_release_asset_is_a_provenance_subject():
     for asset in re.findall(r"files/\S+", create):
         assert asset in subjects or asset == "files/build/sbom/*", asset
     assurance = (ROOT / "docs" / "SECURITY-ASSURANCE.md").read_text()
-    assert "gh attestation verify runtime.lock.txt --repo solarsnake/cui-guard" in assurance
+    assert (
+        "gh attestation verify runtime.lock.txt --repo solarsnake/cui-guard"
+        in assurance
+    )

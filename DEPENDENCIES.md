@@ -1,6 +1,6 @@
 # Runtime dependencies
 
-The runtime closure is pinned and hash-locked in `requirements/runtime.lock.txt` (generated from `uv.lock`). Direct dependencies are `starlette`, `uvicorn` and `httpx`; everything else is transitive. Dev tooling lives in the `dev` dependency group and is not part of the runtime closure.
+The runtime closure is pinned and hash-locked in `uv.lock`, which holds a hash for every artifact. `scripts/check` exports it to `build/locks/runtime.lock.txt` (generated, not committed), and the release publishes that file as `runtime.lock.txt`. Direct dependencies are `starlette`, `uvicorn` and `httpx`; everything else is transitive. Dev tooling lives in the `dev` dependency group and is not part of the runtime closure.
 
 | Package | Why it is needed | What it touches |
 |---|---|---|

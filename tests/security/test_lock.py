@@ -47,15 +47,15 @@ def documented_packages(path: Path) -> set[str]:
     return names
 
 
-def test_every_locked_requirement_has_a_hash():
+def test_every_locked_requirement_has_a_hash(locks):
     for name in ("runtime.lock.txt", "dev.lock.txt"):
-        reqs = parse_requirements(ROOT / "requirements" / name)
+        reqs = parse_requirements(locks / name)
         assert reqs, name
         assert all(r.hashes for r in reqs), [r.name for r in reqs if not r.hashes]
 
 
-def test_runtime_closure_is_documented():
-    names = {r.name for r in parse_requirements(ROOT / "requirements/runtime.lock.txt")}
+def test_runtime_closure_is_documented(locks):
+    names = {r.name for r in parse_requirements(locks / "runtime.lock.txt")}
     assert {"starlette", "uvicorn", "httpx"} <= names
     documented = documented_packages(ROOT / "DEPENDENCIES.md")
     assert names == documented, names ^ documented
@@ -82,7 +82,6 @@ def test_lock_gate_fails_on_drift(tmp_path):
     shutil.copy(ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
     shutil.copy(ROOT / "uv.lock", tmp_path / "uv.lock")
     shutil.copy(ROOT / "README.md", tmp_path / "README.md")
-    shutil.copytree(ROOT / "requirements", tmp_path / "requirements")
     (tmp_path / "src").mkdir()
     shutil.copytree(ROOT / "src" / "cui_guard", tmp_path / "src" / "cui_guard")
     pp = tmp_path / "pyproject.toml"

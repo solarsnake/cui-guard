@@ -1,6 +1,6 @@
 """CycloneDX SBOM of the runtime dependency set, checked against CISA's minimum elements.
 
-Usage: sbom.py build --out PATH   build the SBOM from requirements/runtime.lock.txt
+Usage: sbom.py build --out PATH   build the SBOM from build/locks/runtime.lock.txt
        sbom.py check PATH         exit 1, listing every missing minimum element
 
 The SBOM covers the hash-pinned runtime lock plus a root component for cui-guard itself.
@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LOCK = ROOT / "requirements" / "runtime.lock.txt"
+LOCK = ROOT / "build" / "locks" / "runtime.lock.txt"
 PYPROJECT = ROOT / "pyproject.toml"
 PROJECT = "cui-guard"
 SUPPLIER = "cui-guard contributors"

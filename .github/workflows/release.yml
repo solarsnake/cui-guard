@@ -72,7 +72,7 @@ jobs:
             build/sbom/*
             build/security-report/*
             security/vex.cdx.json
-            requirements/runtime.lock.txt
+            build/locks/runtime.lock.txt
           if-no-files-found: error
 
   attest:
@@ -97,7 +97,7 @@ jobs:
             files/build/dist-a/*
             files/build/sbom/cui-guard.cdx.json
             files/security/vex.cdx.json
-            files/requirements/runtime.lock.txt
+            files/build/locks/runtime.lock.txt
             files/build/security-report/summary.md
             files/build/security-report/report.json
       - name: Attest SBOM
@@ -146,4 +146,4 @@ jobs:
             files/build/security-report/summary.md \
             files/build/security-report/report.json \
             files/security/vex.cdx.json \
-            files/requirements/runtime.lock.txt
+            files/build/locks/runtime.lock.txt

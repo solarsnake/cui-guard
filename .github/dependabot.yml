@@ -17,3 +17,8 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # The codeql-action sub-actions (init, analyze, upload-sarif) must move together.
+    groups:
+      github-actions:
+        patterns:
+          - "*"

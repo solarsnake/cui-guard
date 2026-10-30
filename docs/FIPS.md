@@ -99,3 +99,5 @@ The CMVP certificate belongs to the platform vendor's module, for example the Re
   - no FIPS configuration at all, where the provider check fails.
 
   The kernel check cannot pass in a container, so it is covered only by the unit tests. Without Docker the gate prints `SKIPPED (docker not available)`. CI runs it in its own `fips` job.
+
+  The gate's output also shows `ModuleNotFoundError: No module named '_sha2'` and `code for hash md5 was not found` tracebacks when the interpreter starts. They come from Red Hat's Python, not from cui-guard: with the FIPS provider forced on, the stdlib `hashlib` (imported by `random`) cannot build the non-FIPS digests (md5, blake2, sha3) and logs that it could not. cui-guard does not import or use them. The messages do not fail anything, and they are left unfiltered so that a real error is not hidden.
