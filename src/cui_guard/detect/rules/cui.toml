@@ -1,5 +1,5 @@
 # CUI-marking detectors.
-# Ported from docs/research/01-cui-classification-rules.md, "Detector spec".
+# Patterns follow the public CUI Registry and marking guidance (32 CFR 2002, DoDI 5200.48).
 
 [[rule]]
 id = "cui-banner"

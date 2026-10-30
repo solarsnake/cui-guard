@@ -1,5 +1,5 @@
 # Classified-marking detectors (block-hard on every lane).
-# Ported from docs/research/01-cui-classification-rules.md, "Detector spec".
+# Patterns follow public marking guidance (EO 13526, 32 CFR 2001, DoDM 5200.01 Vol. 2).
 
 [[rule]]
 id = "classified-banner"

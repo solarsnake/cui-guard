@@ -1,6 +1,6 @@
 # cui-guard
 
-`cui-guard` is a local, open-source gateway that sits between an AI agent (Claude Code, Codex CLI, or any agent that accepts a custom base URL) and an LLM endpoint. It inspects every outbound request, blocks or pseudonymizes what your policy forbids, and logs each decision without recording the matched content. Design spec: [docs/superpowers/specs/2026-10-23-cui-guard-design.md](docs/superpowers/specs/2026-10-23-cui-guard-design.md). Known limits: [docs/LIMITS.md](docs/LIMITS.md).
+`cui-guard` is a local, open-source gateway that sits between an AI agent (Claude Code, Codex CLI, or any agent that accepts a custom base URL) and an LLM endpoint. It inspects every outbound request, blocks or pseudonymizes what your policy forbids, and logs each decision without recording the matched content. Known limits: [docs/LIMITS.md](docs/LIMITS.md).
 
 ## Install
 

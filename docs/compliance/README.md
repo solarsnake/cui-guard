@@ -29,7 +29,7 @@ No row is marked "(ID unverified)", because every source above could be fetched.
 - DFARS 252.204-7012 and CMMC Level 2 use SP 800-171 Rev 2 under class deviation 2024-O0013, as of 2026-07-20 (the latest secondary report found). Rev 3 is final but is not what the deviation requires.
 - The CMMC Phase 2 suspension was announced on 2026-07-13, as of 2026-10-29 with no published review outcome found.
 
-These notes come from `docs/research/07-nist-fips.md`, which records the sources and confidence for each point. Check the primary sources before citing them in a plan or an attestation.
+These notes are dated snapshots, not legal guidance. Check the primary sources before citing them in a plan or an attestation.
 
 ## How to use these documents
 
